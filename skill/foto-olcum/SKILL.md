@@ -27,6 +27,8 @@ belirsizliği vardır; ölçüyü belirsizliğiyle birlikte söyle.
    ölçüsünü düzelt; hiçbir feature'a yakın değilse modellenmemiş bir özellik vardır
    (Palet'teki gözden kaçan şerit gibi): fark görseline bak.
 7. Kumpas turu (aşağıda) → `set_measurement` (kilitlenir) → tekrar build/compare.
+   (Faz 2: harfli teknik resim + ölçü tablosu `make_drawing` henüz yok; şimdilik ölçüleri
+   debug görselindeki V*/H*/L* adlarıyla ve net tanımlarla listede iste.)
 8. Durma: tüm fotolarda maks sapma < 0.3 mm, kritik ölçüler kilitli, kontrol ölçüleri 0.2 mm içinde.
    İsteğe bağlı: önce ucuz bir 2D şablon bastırıp oturmayı dene, sonra 3D parça.
 
@@ -34,6 +36,7 @@ belirsizliği vardır; ölçüyü belirsizliğiyle birlikte söyle.
 
 - **5–10 kritik ölçü** (gerekirse fazlası, sert sınır yok) + **2–3 kontrol ölçüsü**
   (`role="control"`). Kontrol ölçüleri hiçbir kalibrasyona girmez; sadece doğrulamadır.
+  (Faz 2: otomatik kontrol/tutarlılık raporu `check_consistency` henüz yok; farkı sen hesapla.)
   Kalibrasyona giren bir ölçünün tutması kanıt sayılmaz.
 - Seç: eşleşen yüzeyleri belirleyen ölçüler, belirsizliği hedefin üstünde olanlar, farklı
   malzeme/kenar tiplerinden en az birer ölçü, bir uzun boy (ölçek kontrolü).
@@ -47,6 +50,8 @@ Tek tek düzeltmeden önce örüntüye bak:
 - Tüm farklar **aynı oranda** → ölçek (çerçeve pencere ölçüsü girildi mi, kalibrasyon).
 - Dış ölçüler hep büyük, delikler hep küçük (veya tersi), farklar **sabit mm** → kenar kayması
   (malzemeye bağlı, şişede opak kapakla camda farklıydı). Malzeme başına tek bir düzeltme.
+  (Faz 2: `fit_edge_offsets` henüz yok; şimdilik kullanıcıya söyle ve etkilenen ölçüleri
+  kumpasla kilitle.)
 - Tek bir ölçü tutmuyor, komşuları tutuyor → büyük olasılıkla yanlış yerden ölçüldü:
   kibarca yeniden ölçmesini iste, nereden ölçeceğini tarif et.
 - Bitişik iki özellik arası boşluk < 0.5 mm ya da negatif çıkıyorsa ölçüyü sorgula.

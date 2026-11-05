@@ -249,8 +249,8 @@ def _measurements(p, pid, verts, holes, material, evidence):
             xs = f"{vid}_x"
             items.append(Measurement(xs, v["x"], v["sigma_x"], "photo_coarse", f"Dış kontur {v['name']} x",
                                      material=material, feature_ref="outer", evidence=[evidence]))
-            if k == 1:
-                ys = 0        # V2 lies on the x axis by construction
+            if abs(v["y"]) < 1e-6:
+                ys = 0        # on the x axis by construction (default origin: V2)
             else:
                 ys = f"{vid}_y"
                 items.append(Measurement(ys, v["y"], v["sigma_y"], "photo_coarse", f"Dış kontur {v['name']} y",

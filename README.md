@@ -31,6 +31,14 @@ python3.12 -m venv .venv
 FreeCAD yolu varsayılan `~/Applications/FreeCAD_1.1.4.AppImage`; farklıysa `FOTO_OLCUM_FREECAD`.
 Projeler `~/foto-olcum-projeler` altında (`FOTO_OLCUM_PROJECTS` ile değişir).
 
+## Klasör taşındıysa
+
+`.venv` mutlak yollar içerir; proje başka bir klasöre taşındıysa ortamı yeniden kur:
+
+```bash
+rm -rf .venv && python3.12 -m venv .venv && .venv/bin/pip install -e ".[test]" && .venv/bin/python -m pytest -q
+```
+
 ## Claude'a bağlama
 
 Claude Code:
@@ -44,6 +52,8 @@ Claude Desktop (`~/.config/Claude/claude_desktop_config.json`):
   "command": "/TAM/YOL/foto-olcum/.venv/bin/foto-olcum-mcp",
   "env": {"FOTO_OLCUM_FREECAD": "/home/huseyin/Applications/FreeCAD_1.1.4.AppImage"}}}}
 ```
+
+Skill (Claude'un yöntemi) için: `cp -r skill/foto-olcum ~/.claude/skills/`
 
 ## İlk kullanım (bir kez)
 
@@ -66,3 +76,12 @@ değmeden). Telefon ~40 cm yukarıda, yaklaşık dik, kalibrasyondaki zoom. Foto
 `new_project` → `add_photos` → `process_photos` → kalınlığı kumpasla `set_measurement(id="thickness")`
 → `extract_features_2d` (debug görseline bak) → `set_model` (önerilen modelden başla) →
 `build_freecad` → `render_and_compare` → kritik ölçüler kumpasla → `set_measurement` → tekrar.
+
+## Bilinen sınırlar
+
+- Doğrulama yalnızca sentetik fotoğraflarla yapıldı. Gerçek telefon fotoğrafında beyaz ekran
+  parlaması, keskinleştirme haleleri ve JPEG ek kenar kayması getirir; `EDGE_BIAS_PX = 0.5`
+  bir tahmindir. Gerçek hata ancak ölçüleri bilinen bir test plakasıyla görülecek.
+- `extract_features_2d` her çalıştığında o fotonun parça koordinat sistemini (`part_frame`)
+  yeniler. Build'den sonra başka eksen/orijinle yeniden çıkarırsan modeli de yeniden kur,
+  yoksa `render_and_compare` kayık karşılaştırır.
