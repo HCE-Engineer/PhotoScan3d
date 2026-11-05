@@ -24,6 +24,10 @@ def evaluate(expr, values: dict[str, float]) -> float:
     for node in ast.walk(tree):
         if not isinstance(node, allowed):
             raise ValueError(f"ifadede izin verilmeyen öğe: {expr!r}")
+        if isinstance(node, ast.Call) and not (isinstance(node.func, ast.Name) and node.func.id in _FUNCS):
+            raise ValueError(f"ifadede sadece {sorted(k for k in _FUNCS if k != 'pi')} çağrılabilir: {expr!r}")
+        if isinstance(node, ast.Name) and node.id not in _FUNCS and node.id not in values:
+            raise ValueError(f"tanımsız ölçü '{node.id}' ({expr!r})")
     return float(eval(compile(tree, "<expr>", "eval"), {"__builtins__": {}}, {**_FUNCS, **values}))
 
 
