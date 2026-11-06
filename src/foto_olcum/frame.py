@@ -19,6 +19,7 @@ from . import config
 
 DICT_NAME = "DICT_4X4_50"
 RES = 0.5  # raster resolution, mm
+MIN_BLACK_MM = 1.5  # narrowest printable black feature (0.6 mm nozzle: ~2 extrusion widths)
 
 
 @dataclass
@@ -150,6 +151,10 @@ def black_raster(f: Frame) -> np.ndarray:
         big = np.kron(img == 0, np.ones((cells, cells), bool))[::-1]  # flip: image top = +y
         mx0, my0 = int(round(mx / RES)), int(round(my / RES))
         r[my0:my0 + big.shape[0], mx0:mx0 + big.shape[1]] = big
+    # drop black slivers narrower than MIN_BLACK_MM (e.g. ribs between neighbouring quiet
+    # zones): a 0.4-0.6 mm nozzle cannot print them. Marker cells are far wider and survive.
+    k = int(np.ceil(MIN_BLACK_MM / RES))
+    r = cv2.morphologyEx(r.astype(np.uint8), cv2.MORPH_OPEN, np.ones((k, k), np.uint8)).astype(bool)
     return r
 
 
