@@ -1,16 +1,18 @@
-"""Synthetic backlit photos of a known 2.5D part on the reference frame.
+"""Synthetic backlit photos of a known 2.5D part on the printed ChArUco sheet.
 
 Deliberately independent of the measurement code path: its own pinhole projection
-(no cv2.projectPoints / backproject), PIL polygon rasterisation with supersampling,
+(no cv2.projectPoints / backproject / ChArUco detection), PIL polygon rasterisation
+with supersampling, the sheet texture warped through its own projected corners,
 then blur, noise and JPEG. Geometry bugs on either side therefore do not cancel.
 """
 import math
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
-from .frame import RES, Frame, _rects, black_raster
+from .board import Sheet
 
 
 @dataclass
@@ -18,7 +20,7 @@ class Part:
     outline: list                     # [(x, y, r)] CCW in part coords, r = corner radius
     holes: list = field(default_factory=list)    # [(cx, cy, d)]
     thickness: float = 5.0
-    place: tuple = (60.0, 70.0, 10.0)            # x, y, rotation_deg in frame coords
+    place: tuple = (60.0, 70.0, 10.0)            # x, y, rotation_deg in sheet coords
 
 
 @dataclass
@@ -28,13 +30,13 @@ class Cam:
     h: int = 2250
     dist_mm: float = 380.0
     tilt_deg: tuple = (4.0, -3.0)     # rotation about x, y
-    target: tuple = (105.0, 105.0)    # frame point the camera looks at
+    target: tuple = (95.25, 139.7)    # sheet point the camera looks at (A4 sheet centre)
 
     def K(self):
         return np.array([[self.f, 0, (self.w - 1) / 2], [0, self.f, (self.h - 1) / 2], [0, 0, 1.0]])
 
     def Rt(self):
-        """World (frame) -> camera. Camera looks down -z of the world (z up)."""
+        """World (sheet) -> camera. Camera looks down -z of the world (z up)."""
         ax, ay = map(math.radians, self.tilt_deg)
         # base: camera x = world x, camera y = -world y, camera z = -world z
         base = np.diag([1.0, -1.0, -1.0])
@@ -138,27 +140,29 @@ def _ccw(poly):
     return poly if a > 0 else poly[::-1]
 
 
-def render(part: Part, frame: Frame, cam: Cam, ss: int = 3, blur_px: float = 0.7, noise: float = 2.0,
-           seed: int = 0, levels=(28, 238, 215, 22)) -> Image.Image:
-    """levels: (part, screen, thin white frame, black frame) grey values."""
-    dark, screen, white, black = levels
+def render(part: Part, sheet: Sheet, cam: Cam, ss: int = 3, blur_px: float = 0.7, noise: float = 2.0,
+           seed: int = 0, levels=(28, 238, 222, 22)) -> Image.Image:
+    """levels: (part, screen, backlit paper, printed black) grey values."""
+    dark, screen, paper, black = levels
     W, H = cam.w * ss, cam.h * ss
-    im = Image.new("L", (W, H), screen)
+
+    # sheet: the board texture mapped onto z = 0 through a homography of its own corners
+    pps = 100                                           # texture px per square
+    tex = sheet.texture(pps).astype(np.float32)
+    th, tw = tex.shape
+    # texture pixel centres sit at (i + 0.5) / pps squares; row 0 is the top (y = height)
+    src = np.float32([[-0.5, -0.5], [tw - 0.5, -0.5], [tw - 0.5, th - 0.5], [-0.5, th - 0.5]])
+    world = [(0, sheet.height, 0), (sheet.width, sheet.height, 0), (sheet.width, 0, 0), (0, 0, 0)]
+    dst = (_proj(cam, world) * ss + (ss - 1) / 2).astype(np.float32)
+    Hm = cv2.getPerspectiveTransform(src, dst)
+    shade = np.round(black + (paper - black) * tex / 255.0).astype(np.uint8)
+    canvas = cv2.warpPerspective(shade, Hm, (W, H), flags=cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_CONSTANT, borderValue=screen)
+    im = Image.fromarray(canvas)
     dr = ImageDraw.Draw(im)
 
     def poly(pts3, val):
         _fill(dr, _proj(cam, pts3) * ss + (ss - 1) / 2, val)   # pixel centres of the supersampled grid
-
-    # frame: thin base everywhere except the window, black layer rectangles on top
-    x0, y0, x1, y1 = frame.window
-    z_top = frame.base_mm + frame.black_mm
-    for (a, b, c, d) in [(0, 0, frame.outer_w, y0), (0, y1, frame.outer_w, frame.outer_h),
-                         (0, y0, x0, y1), (x1, y0, frame.outer_w, y1)]:
-        poly([(a, b, frame.base_mm), (c, b, frame.base_mm), (c, d, frame.base_mm), (a, d, frame.base_mm)], white)
-    for rx0, ry0, rx1, ry1 in _rects(black_raster(frame)):
-        xa, ya, xb, yb = rx0 * RES, ry0 * RES, rx1 * RES, ry1 * RES
-        for z in (frame.base_mm, z_top):
-            poly([(xa, ya, z), (xb, ya, z), (xb, yb, z), (xa, yb, z)], black)
 
     # part: union of top face, bottom face and side walls; through holes are bright where
     # the projected top and bottom openings overlap
@@ -175,7 +179,7 @@ def render(part: Part, frame: Frame, cam: Cam, ss: int = 3, blur_px: float = 0.7
         bot = _ccw(_proj(cam, np.c_[c, np.zeros(len(c))]))
         inter = _clip(top, bot)
         if len(inter) >= 3:
-            _fill(dr, inter * ss + (ss - 1) / 2, screen)
+            _fill(dr, inter * ss + (ss - 1) / 2, paper)       # the blank paper shows through
 
     im = im.filter(ImageFilter.GaussianBlur(blur_px * ss))
     im = im.resize((cam.w, cam.h), Image.BOX)

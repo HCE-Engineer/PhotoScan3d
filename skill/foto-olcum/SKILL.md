@@ -13,8 +13,8 @@ belirsizliği vardır; ölçüyü belirsizliğiyle birlikte söyle.
 
 1. Parçanın **görevini** sor: neye takılıyor, hangi yüzeyler eşleşiyor (pim, vida, klips, yuva).
    Kritik ölçüleri bu belirler. Prizmatik mi (Faz 1: 2.5D plaka) değil mi, ona bak.
-2. `new_project`, `add_photos` (çerçeve + kamera adı), `process_photos`. Uyarıları oku:
-   az marker, düşük kontrast, parça pencere kenarına değiyor, kalibrasyon yok.
+2. `new_project`, `add_photos` (altlık + kamera adı), `process_photos`. Uyarıları oku:
+   az ChArUco köşesi, düşük kontrast, parça desene değiyor, baskı ölçeği girilmemiş, kalibrasyon yok.
 3. **İlk kumpas ölçüsü kalınlıktır**: `set_measurement(id="thickness", source="caliper")`.
    Perspektif düzeltmesi buna bağlı.
 4. `extract_features_2d` → debug görselini mutlaka incele: her köşe (V*) gerçek bir köşe mi,
@@ -47,7 +47,7 @@ belirsizliği vardır; ölçüyü belirsizliğiyle birlikte söyle.
 ## Ölçüm tahmine uymadığında
 
 Tek tek düzeltmeden önce örüntüye bak:
-- Tüm farklar **aynı oranda** → ölçek (çerçeve pencere ölçüsü girildi mi, kalibrasyon).
+- Tüm farklar **aynı oranda** → ölçek (altlığın A–B/A–C ölçüsü girildi mi, kalibrasyon).
 - Dış ölçüler hep büyük, delikler hep küçük (veya tersi), farklar **sabit mm** → kenar kayması
   (malzemeye bağlı, şişede opak kapakla camda farklıydı). Malzeme başına tek bir düzeltme.
   (Faz 2: `fit_edge_offsets` henüz yok; şimdilik kullanıcıya söyle ve etkilenen ölçüleri

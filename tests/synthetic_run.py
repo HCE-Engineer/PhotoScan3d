@@ -23,13 +23,14 @@ DEFAULT_PART = dict(
 def prepare(root: Path, part_kw=None, cam_kw=None, seed=0):
     """Frame 'synth', camera 'synth' and one rendered photo under root. Returns (photo, part)."""
     os.environ["FOTO_OLCUM_PROJECTS"] = str(root)
-    from foto_olcum import frame as fr, synth
+    from foto_olcum import synth
+    from foto_olcum.board import Sheet
     from foto_olcum.calib import Camera
 
     part = synth.Part(**(part_kw or DEFAULT_PART))
     cam = synth.Cam(**(cam_kw or {}))
-    f = fr.layout("synth")
-    fr.build(f, root / "_cerceveler" / "synth")
+    f = Sheet("synth", measured_ref=[127.0, 127.0])
+    f.save(root / "_altliklar" / "synth" / "sheet.json")
     photo = root / f"synth_{seed}.jpg"
     synth.render(part, f, cam, seed=seed).save(photo, quality=92)
     Camera("synth", [cam.w, cam.h], cam.K().tolist(), [0, 0, 0, 0, 0], 0.0, 0, "charuco", 0.0).save()
@@ -45,7 +46,7 @@ def run(root: Path, part_kw=None, cam_kw=None, seed=0, verbose=True, calibrated=
     name = f"synth_{seed}"
     p = Project.create(name)
     pid = p.add_photo(photo, "silhouette")
-    p.update_photo(pid, frame="synth", camera="synth" if calibrated else None)
+    p.update_photo(pid, sheet="synth", camera="synth" if calibrated else None)
     proc = features2d.process_photo(p, pid)
     p.put_measurement(Measurement("thickness", part.thickness, 0.03, "caliper", "kalınlık", locked=True))
     res = features2d.extract(p, pid)

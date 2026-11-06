@@ -11,12 +11,12 @@ Tasarım: [docs/SPEC.md](docs/SPEC.md). Claude'un yöntemi: [skill/foto-olcum/SK
 | Faz | İçerik | Durum |
 |---|---|---|
 | 0 | MCP iskeleti, proje/ölçü modeli, kumpas kilidi, FreeCAD build (tablo + tam kısıtlı sketch + STEP/STL) | bitti |
-| 1 | Referans çerçeve, kalibrasyon, arkadan aydınlatmalı silüet, alt-piksel kenar, perspektif (z=0/z=t), doğru/daire/radyus fit, belirsizlik, compare + fark görseli | bitti, **sadece sentetik fotoğraflarla doğrulandı** |
+| 1 | A4 ChArUco altlık, kalibrasyon, arkadan aydınlatmalı silüet, alt-piksel kenar, perspektif (z=0/z=t), doğru/daire/radyus fit, belirsizlik, compare + fark görseli | bitti, **sadece sentetik fotoğraflarla doğrulandı** |
 | 2 | Harfli teknik resim + ölçü tablosu, tutarlılık kontrolleri, malzeme kenar kayması (B) kalibrasyonu, snap, 2D şablon | sırada |
 | 3–4 | Çok görüşlü prizmatik (cep, kanal, pah), yakın çekim | sonra |
 
-Sentetik testlerde (3000×2250 px, ~0.15 mm/px, kamera 300–410 mm) kalibrasyonlu ölçümlerde
-maks. hata ≈ 0.1 mm; kalibrasyonsuzda 10 mm kalın parça + 12° eğik çekimde 0.5 mm'ye kadar
+Sentetik testlerde (3000×2250 px, ~0.15 mm/px, kamera 300–410 mm, A4 ChArUco altlık)
+kalibrasyonlu ölçümlerde maks. hata ≈ 0.1 mm; kalibrasyonsuzda 10 mm kalın parça + 12° eğik çekimde 0.5 mm'ye kadar
 (belirsizlik bunu raporluyor). Gerçek fotoğrafta malzemeye bağlı kenar kayması ek hata getirecek;
 bu Faz 2'de kumpas ölçüleriyle kalibre edilecek.
 
@@ -57,19 +57,18 @@ Skill (Claude'un yöntemi) için: `cp -r skill/foto-olcum ~/.claude/skills/`
 
 ## İlk kullanım (bir kez)
 
-1. **Çerçeveyi bas:** `make_reference_frame` → `~/foto-olcum-projeler/_cerceveler/cerceve_a/`.
-   Açık renk PLA, %100 dolgu; 0.6 mm'de siyaha filament değişimi en iyisi (tek renk de çalışır).
-   Varsayılan dış ölçü 210×210 mm, pencere 138×138 mm; tablana göre değiştir.
-2. **Pencereyi ölç:** basılan çerçevenin pencere iç genişlik/yüksekliğini kumpasla →
-   `set_frame_measurement`.
-3. **Telefonu kalibre et:** `make_calibration_pattern` → PNG'yi monitörde tam ekran aç,
-   ölçümde kullanacağın zoom ile 15–20 fotoğraf çek → `calibrate_camera`.
+1. **Altlığı bas:** `make_reference_sheet` → `~/foto-olcum-projeler/_altliklar/a4/a4.pdf`.
+   A4'e **%100 / gerçek boyut** ("sayfaya sığdır" kapalı), lazer yazıcı en iyisi.
+2. **Baskı ölçeğini ölç:** kağıttaki A–B ve A–C oklarının gösterdiği kare köşeleri arası
+   (nominal 127.0 mm) kumpasla → `set_sheet_measurement`.
+3. **Telefonu kalibre et:** ölçümde kullanacağın zoom ile altlığın 15–20 fotoğrafını çek
+   (farklı açılar ±30°, altlık bazen kadraj köşelerine gelsin) → `calibrate_camera(sheet="a4")`.
 
 ## Çekim
 
-Tablet/monitör beyaz ekran, üstünde çerçeve, parça pencerede (oturduğu yüz aşağıda, kenarlara
-değmeden). Telefon ~40 cm yukarıda, yaklaşık dik, kalibrasyondaki zoom. Fotoğrafı özgün
-çözünürlükte dosya olarak ver.
+Monitör/tablet beyaz ekran, üstüne basılı altlık, parça ortadaki boş alanda (oturduğu yüz
+aşağıda, desene değmeden). Telefon ~40 cm yukarıda, yaklaşık dik, kalibrasyondaki zoom,
+altlığın tamamı kadrajda. Fotoğrafı özgün çözünürlükte dosya olarak ver.
 
 ## Akış
 

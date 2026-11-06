@@ -1,4 +1,5 @@
-"""Camera intrinsics (ChArUco on a monitor), fallback from EXIF, and per-photo pose.
+"""Camera intrinsics (printed ChArUco sheet or the pattern on a monitor), fallback from
+EXIF, and per-photo pose from the ChArUco sheet.
 
 Images are always read in raw sensor orientation (EXIF rotation ignored) so that portrait
 and landscape shots share one calibration.
@@ -13,7 +14,7 @@ import numpy as np
 from PIL import Image
 
 from . import config
-from .frame import Frame, aruco_dict
+from .board import Sheet, detect
 
 CHARUCO_DICT = cv2.aruco.DICT_5X5_100
 CHARUCO_SQUARES = (11, 7)
@@ -75,8 +76,9 @@ class Camera:
         return K, np.array(self.dist)
 
 
-def calibrate(paths: list[Path], name: str) -> dict:
-    board = charuco_board()
+def calibrate(paths: list[Path], name: str, sheet: Sheet | None = None) -> dict:
+    """Photos of the printed sheet (sheet given) or of the monitor pattern (sheet None)."""
+    board = sheet.board() if sheet else charuco_board()
     det = cv2.aruco.CharucoDetector(board)
     objs, imgs, used, skipped, size = [], [], [], [], None
     for p in paths:
@@ -137,8 +139,8 @@ class Pose:
     rvec: np.ndarray
     tvec: np.ndarray
     rms_px: float
-    n_markers: int
-    marker_ids: list
+    n_corners: int
+    corner_ids: list
     scale_sigma_rel: float   # relative scale uncertainty from pose (bootstrap)
     shift_sigma_mm: float    # absolute position uncertainty (bootstrap, window RMS)
 
@@ -152,8 +154,8 @@ class Pose:
 
     def to_json(self):
         c = self.camera_center
-        return {"rms_px": round(self.rms_px, 3), "n_markers": self.n_markers,
-                "marker_ids": self.marker_ids, "camera_center_mm": [round(v, 1) for v in c],
+        return {"rms_px": round(self.rms_px, 3), "n_corners": self.n_corners,
+                "corner_ids": self.corner_ids, "camera_center_mm": [round(v, 1) for v in c],
                 "scale_sigma_rel": self.scale_sigma_rel, "shift_sigma_mm": round(self.shift_sigma_mm, 4),
                 "rvec": self.rvec.ravel().tolist(), "tvec": self.tvec.ravel().tolist(),
                 "K": self.K.tolist()}
@@ -161,20 +163,7 @@ class Pose:
     @classmethod
     def from_json(cls, d):
         return cls(np.array(d["K"]), np.array(d["rvec"]).reshape(3, 1), np.array(d["tvec"]).reshape(3, 1),
-                   d["rms_px"], d["n_markers"], d["marker_ids"], d["scale_sigma_rel"], d["shift_sigma_mm"])
-
-
-def detect_frame_markers(gray, frame: Frame):
-    params = cv2.aruco.DetectorParameters()
-    params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-    det = cv2.aruco.ArucoDetector(aruco_dict(), params)
-    corners, ids, _ = det.detectMarkers(gray)
-    found = {}
-    if ids is not None:
-        for c, i in zip(corners, ids.ravel()):
-            if str(int(i)) in frame.markers:
-                found[int(i)] = c.reshape(4, 2).astype(np.float64)
-    return found
+                   d["rms_px"], d["n_corners"], d["corner_ids"], d["scale_sigma_rel"], d["shift_sigma_mm"])
 
 
 def _solve(obj, img, K):
@@ -185,21 +174,22 @@ def _solve(obj, img, K):
     return rvec, tvec
 
 
-def estimate_pose(gray_undist, K, frame: Frame, rng_seed=0) -> Pose:
-    found = detect_frame_markers(gray_undist, frame)
-    if len(found) < 3:
-        raise ValueError(f"çerçeve marker'ı yetersiz: {len(found)} bulundu (en az 3, tercihen 8+). "
-                         "Çerçevenin tamamı kadrajda ve arkadan aydınlatılmış olmalı.")
-    ids = sorted(found)
-    obj = np.concatenate([frame.marker_corners(i) for i in ids])
-    img = np.concatenate([found[i] for i in ids])
+MIN_CORNERS = 12
+
+
+def estimate_pose(gray_undist, K, sheet: Sheet, rng_seed=0) -> Pose:
+    img, ids = detect(gray_undist, sheet)
+    if len(ids) < MIN_CORNERS:
+        raise ValueError(f"altlıkta yetersiz ChArUco köşesi: {len(ids)} bulundu (en az {MIN_CORNERS}, "
+                         "tercihen 40+). Kağıdın tamamı kadrajda, düz ve aydınlık olmalı.")
+    obj = sheet.corners_mm(ids)
     rvec, tvec = _solve(obj, img, K)
     proj, _ = cv2.projectPoints(obj, rvec, tvec, K, None)
     rms = float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - img) ** 2, 1))))
 
-    # Bootstrap over markers: how much do window points and distances move?
+    # Bootstrap over corners: how much do window points and distances move?
     from .geometry import backproject
-    wx0, wy0, wx1, wy1 = frame.window
+    wx0, wy0, wx1, wy1 = sheet.window
     gx, gy = np.meshgrid(np.linspace(wx0, wx1, 5), np.linspace(wy0, wy1, 5))
     grid = np.c_[gx.ravel(), gy.ravel(), np.zeros(gx.size)]
     gimg, _ = cv2.projectPoints(grid, rvec, tvec, K, None)
@@ -209,10 +199,9 @@ def estimate_pose(gray_undist, K, frame: Frame, rng_seed=0) -> Pose:
     diag = np.hypot(wx1 - wx0, wy1 - wy0)
     for _ in range(30):
         pick = rng.choice(len(ids), len(ids), replace=True)
-        if len(set(pick)) < 3:
+        if len(set(pick)) < 6:
             continue
-        o = np.concatenate([obj[4 * k:4 * k + 4] for k in pick])
-        im = np.concatenate([img[4 * k:4 * k + 4] for k in pick])
+        o, im = obj[pick], img[pick]
         try:
             rv, tv = _solve(o, im, K)
         except (ValueError, cv2.error):
@@ -222,4 +211,4 @@ def estimate_pose(gray_undist, K, frame: Frame, rng_seed=0) -> Pose:
         scales.append(np.linalg.norm(p[0] - p[-1]) / diag - 1)
     shift = float(np.mean(shifts)) if shifts else float("nan")
     scale = float(np.std(scales)) if len(scales) > 5 else 0.01
-    return Pose(K, rvec, tvec, rms, len(ids), ids, scale, shift)
+    return Pose(K, rvec, tvec, rms, len(ids), ids.tolist(), scale, shift)

@@ -33,8 +33,8 @@ async def main(root: Path):
                 return out, n_img
 
             await call("new_project", name="e2e")
-            out, _ = await call("add_photos", project="e2e", paths=[str(photo)], frame="synth", camera="synth")
-            assert out["photos"][0]["markers_found"] >= 18, out
+            out, _ = await call("add_photos", project="e2e", paths=[str(photo)], sheet="synth", camera="synth")
+            assert out["photos"][0]["charuco_corners"] >= 40, out
             out, n = await call("process_photos", project="e2e")
             assert out["ok"] and n == 1, out
             out, _ = await call("extract_features_2d", project="e2e", photo_id="P01")

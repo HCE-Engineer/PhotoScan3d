@@ -1,7 +1,7 @@
 """Per-photo pipeline: pose, silhouette, subpixel edges, footprint, fits, part frame.
 
 Every reported number carries an uncertainty built from:
-  fit (statistical) ⊕ edge offset (unknown material bias B) ⊕ pose/frame scale ⊕ thickness.
+  fit (statistical) ⊕ edge offset (unknown material bias B) ⊕ pose/sheet scale ⊕ thickness.
 """
 import json
 from dataclasses import dataclass
@@ -11,7 +11,7 @@ import numpy as np
 
 from . import edges, fit, geometry, segment
 from .calib import Pose, estimate_pose
-from .frame import Frame
+from .board import Sheet
 from .imaging import bbox_crop, put_label, save_debug, undistorted
 from .project import Measurement, Project
 
@@ -27,21 +27,20 @@ def _photo_paths(p: Project, pid: str):
 
 def process_photo(p: Project, pid: str) -> dict:
     info, raw = _photo_paths(p, pid)
-    frame = Frame.load(info["frame"])
+    sheet = Sheet.load(info["sheet"])
     img, K, cam = undistorted(raw, info.get("camera"))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     und_path = p.path(f"photos/undistorted/{pid}.png")
     und_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(und_path), img)
-    pose = estimate_pose(gray, K, frame)
+    pose = estimate_pose(gray, K, sheet)
     warnings = []
     if cam.source != "charuco":
         warnings.append("kamera kalibrasyonu yok: odak EXIF'ten tahmin edildi, distorsiyon sıfır "
                         "varsayıldı. Kenarlarda ±0.3 mm'ye kadar ek hata olabilir; calibrate_camera önerilir.")
     if pose.rms_px > 1.0:
         warnings.append(f"marker reprojeksiyon hatası yüksek ({pose.rms_px:.2f} px)")
-    window_px = geometry.project(np.c_[frame.window_poly(shrink=2.0), np.full(4, frame.base_mm + frame.black_mm)],
-                                 K, pose.rvec, pose.tvec)
+    window_px = geometry.project(np.c_[sheet.window_poly(shrink=2.0), np.zeros(4)], K, pose.rvec, pose.tvec)
     roi = segment.roi_mask(gray.shape, window_px)
     sil = segment.backlit(gray, roi)
     warnings += sil.warnings
@@ -51,7 +50,7 @@ def process_photo(p: Project, pid: str) -> dict:
         warnings.append(f"kamera dikten {tilt:.0f}° sapmış; 15°'nin altı önerilir")
     ms = p.measurements()
     t = ms["thickness"].value_mm if "thickness" in ms else 0.0
-    center_px = geometry.project([[*np.mean(frame.window_poly(), 0), t]], K, pose.rvec, pose.tvec)
+    center_px = geometry.project([[*np.mean(sheet.window_poly(), 0), t]], K, pose.rvec, pose.tvec)
     mmpp = float(geometry.mm_per_px(K, pose.rvec, pose.tvec, center_px, t)[0])
 
     dbg = img.copy()
@@ -62,7 +61,9 @@ def process_photo(p: Project, pid: str) -> dict:
     out = save_debug(dbg, p.path(f"debug/{pid}_maske.png"), bbox_crop(window_px, gray.shape))
     p.update_photo(pid, pose=pose.to_json(), camera_source=cam.source, f_sigma_rel=cam.f_sigma_rel, mm_per_px=mmpp,
                    image_size=list(gray.shape[::-1]), processed=True)
-    return {"photo": pid, "pose_rms_px": round(pose.rms_px, 3), "markers": pose.n_markers,
+    if not sheet.measured_ref:
+        warnings.append("altlığın baskı ölçeği girilmedi (set_sheet_measurement): ölçülerde ±%1 ölçek belirsizliği var")
+    return {"photo": pid, "pose_rms_px": round(pose.rms_px, 3), "charuco_corners": pose.n_corners,
             "camera_source": cam.source, "tilt_deg": round(tilt, 1),
             "camera_distance_mm": round(float(np.linalg.norm(pose.camera_center)), 0),
             "mm_per_px": round(mmpp, 4), "scale_sigma_rel": round(pose.scale_sigma_rel, 5),
@@ -77,7 +78,7 @@ class _Ctx:
     t: float
     t_sigma: float
     mmpp: float
-    frame: Frame
+    sheet: Sheet
     noise: float = 0.0
     extra_rel: float = 0.0      # intrinsics: focal error via height correction, lens distortion
     f_rel: float = 0.0          # relative focal-length uncertainty
@@ -97,9 +98,9 @@ def _contour_mm(gray, contour, c: _Ctx, want_ccw: bool):
 
 
 def _sys_sigma(c: _Ctx, length_mm: float, n_edges: int, amb: float = 0.0) -> float:
-    """Systematic part: edge bias, scale (pose + frame print), thickness ambiguity."""
+    """Systematic part: edge bias, scale (pose + sheet print), thickness ambiguity."""
     b = EDGE_BIAS_PX * c.mmpp * n_edges
-    rel = np.sqrt(c.pose.scale_sigma_rel ** 2 + c.frame.scale_sigma_rel ** 2 + c.extra_rel ** 2)
+    rel = np.sqrt(c.pose.scale_sigma_rel ** 2 + c.sheet.scale_sigma_rel ** 2 + c.extra_rel ** 2)
     s = abs(length_mm) * rel
     # top/bottom edge choice: its separation `amb` scales with thickness and focal errors
     pt = amb * np.hypot(c.t_sigma / c.t, c.f_rel) if c.t > 0 else amb
@@ -115,17 +116,17 @@ def extract(p: Project, pid: str, axis_line: int | None = None, origin_corner: i
     if "thickness" not in ms:
         raise ValueError("parça kalınlığı gerekli: kumpasla ölçüp set_measurement(id='thickness', "
                          "value_mm=..., source='caliper') girin. Perspektif düzeltmesi buna bağlı.")
-    frame = Frame.load(info["frame"])
+    sheet = Sheet.load(info["sheet"])
     pose = Pose.from_json(info["pose"])
     img = cv2.imread(str(p.path(f"photos/undistorted/{pid}.png")))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     mask = cv2.imread(str(p.path(f"masks/{pid}.png")), 0)
-    c = _Ctx(pose.K, pose, ms["thickness"].value_mm, ms["thickness"].uncertainty_mm, info["mm_per_px"], frame)
-    # a focal-length error mis-scales the z = t plane relative to the marker plane by
-    # ~ (t - z_marker) / D * df/f; uncalibrated lenses also carry unmodelled distortion
+    c = _Ctx(pose.K, pose, ms["thickness"].value_mm, ms["thickness"].uncertainty_mm, info["mm_per_px"], sheet)
+    # a focal-length error mis-scales the z = t plane relative to the sheet plane by
+    # ~ t / D * df/f; uncalibrated lenses also carry unmodelled distortion
     dist_mm = float(np.linalg.norm(pose.camera_center))
     f_rel = c.f_rel = info.get("f_sigma_rel", 0.3)
-    c.extra_rel = float(np.hypot(abs(c.t - frame.z_marker) / dist_mm * f_rel,
+    c.extra_rel = float(np.hypot(c.t / dist_mm * f_rel,
                                  0.002 if info.get("camera_source") != "charuco" else 0.0))
 
     contours, hier = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)

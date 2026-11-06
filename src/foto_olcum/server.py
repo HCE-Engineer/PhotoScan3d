@@ -10,9 +10,11 @@ from mcp.server.mcpserver import Image, MCPServer
 from . import build as build_mod
 from . import compare as compare_mod
 from . import config, features2d
-from . import frame as frame_mod
 from . import measure as measure_mod
-from .calib import Camera, calibrate, detect_frame_markers, imread, make_pattern
+from .board import Sheet
+from .board import build as build_sheet
+from .board import detect as detect_sheet
+from .calib import Camera, calibrate, imread, make_pattern
 from .model import validate
 from .project import LockedError, Measurement, Project
 
@@ -108,7 +110,7 @@ def set_model(project: str, model: dict) -> dict:
       pocket: {id, type:'pocket', profile:[...], depth:'through'|ifade, z?}
       hole:   {id, type:'hole', center:[x,y], diameter, depth:'through'|ifade, thread?:'M6'}
     Profil köşesindeki r, o dik köşenin radyusudur (sketch içinde teğet yay).
-    Koordinatlar parça sisteminde: XY oturma yüzeyi (çerçeve düzlemi), Z yukarı."""
+    Koordinatlar parça sisteminde: XY oturma yüzeyi (altlık düzlemi), Z yukarı."""
     try:
         p = Project.open(project)
         values = {k: m.value_mm for k, m in p.measurements().items()}
@@ -141,27 +143,65 @@ def _with_images(result: dict, *paths):
 
 
 @mcp.tool()
-def make_calibration_pattern(screen_w_px: int = 1920, screen_h_px: int = 1080):
-    """Kamera kalibrasyonu için ChArUco desenini PNG olarak üretir. Kullanıcı bunu
-    monitörde tam ekran açıp telefonla 15-20 farklı açıdan çeker (desenin fiziksel boyutu
-    önemsiz). screen_*: monitör çözünürlüğü."""
+def make_reference_sheet(name: str = "a4"):
+    """A4'e basılacak ChArUco altlığını üretir (PDF, tam ölçek): kenarlarda ChArUco deseni,
+    ortada parça için boş alan. Ölçek kontrolü için A-B ve A-C (10 kare = 127 mm) işaretli."""
     try:
-        out = make_pattern(config.calibration_dir() / f"charuco_{screen_w_px}x{screen_h_px}.png",
-                           screen_w_px, screen_h_px)
-        return {"ok": True, "png": str(out), "talimat": [
-            "PNG'yi monitörde tam ekran açın (görüntüleyicide F11), ölçeklemeyi %100 bırakın.",
-            "Telefonda ölçümde kullanacağınız zoom ayarını seçin ve odağı/zoom'u değiştirmeyin.",
-            "Ekranı 15-20 kez çekin: farklı açılar (±30°'ye kadar eğik), farklı uzaklıklar, desen "
-            "bazen kadrajın köşelerine gelecek şekilde. Ekran yansıması olmasın.",
-            "Fotoğrafları bir klasöre koyup calibrate_camera ile verin."]}
+        sheet = Sheet(name)
+        files = build_sheet(sheet, config.sheets_dir() / name)
+        x0, y0, x1, y1 = sheet.window
+        return _with_images({"ok": True, "sheet": name, "files": files,
+                             "blank_area_mm": [round(x1 - x0, 1), round(y1 - y0, 1)], "talimat": [
+            "PDF'i A4'e %100 / 'Gerçek boyut' ile basın ('Sayfaya sığdır' KAPALI). Lazer yazıcı en iyisi; "
+            "mürekkepte koyu ve keskin baskı seçin.",
+            "Kağıdın kıvrılmamasını sağlayın. Monitör/tablet beyaz ekranın üstüne düz koyun.",
+            f"A-B ve A-C mesafelerini (kare köşesinden kare köşesine, nominal {sheet.ref_nominal:.1f} mm) "
+            "kumpasla ölçüp set_sheet_measurement ile girin; yazıcının ölçek hatası buradan düzeltilir.",
+            "Aynı kağıt kamera kalibrasyonu için de kullanılır: calibrate_camera(sheet=...)."]},
+            files["preview_png"])
     except Exception as e:
         return _err(e)
 
 
 @mcp.tool()
-def calibrate_camera(phone_name: str, photo_paths: list[str] | None = None, folder: str | None = None) -> dict:
-    """ChArUco fotoğraflarından kamera iç parametrelerini (K, distorsiyon) hesaplar ve
-    phone_name adıyla kaydeder. Reprojeksiyon hatası > 0.5 px ise uyarır."""
+def set_sheet_measurement(sheet: str, ab_mm: float, ac_mm: float) -> dict:
+    """Basılı altlıkta kumpasla ölçülen A-B (x) ve A-C (y) mesafeleri. ChArUco köşe
+    koordinatları buna göre ölçeklenir."""
+    try:
+        sh = Sheet.load(sheet)
+        sh.measured_ref = [float(ab_mm), float(ac_mm)]
+        sh.save(config.sheets_dir() / sheet / "sheet.json")
+        sx, sy = sh.scale
+        out = {"ok": True, "scale_x": sx, "scale_y": sy}
+        if abs(sx - 1) > 0.015 or abs(sy - 1) > 0.015:
+            out["warning"] = ("nominalden %1.5'ten fazla fark: 'sayfaya sığdır' ile mi basıldı, ya da ölçüm "
+                              "yanlış köşelerden mi alındı? Gerekirse %100 ile yeniden basın.")
+        return out
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def make_calibration_pattern(screen_w_px: int = 1920, screen_h_px: int = 1080):
+    """(İsteğe bağlı) Monitörde gösterilecek ChArUco deseni. Basılı A4 altlık varsa ona gerek
+    yok: calibrate_camera(sheet=...) ile altlığın fotoğrafları kullanılır."""
+    try:
+        out = make_pattern(config.calibration_dir() / f"charuco_{screen_w_px}x{screen_h_px}.png",
+                           screen_w_px, screen_h_px)
+        return {"ok": True, "png": str(out), "talimat": [
+            "PNG'yi monitörde tam ekran açın, ölçeklemeyi %100 bırakın.",
+            "Ölçümde kullanacağınız zoom ile ekranı 15-20 kez, farklı açılardan çekin."]}
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def calibrate_camera(phone_name: str, photo_paths: list[str] | None = None, folder: str | None = None,
+                     sheet: str | None = None) -> dict:
+    """Kamera iç parametrelerini (K, distorsiyon) hesaplar ve phone_name adıyla kaydeder.
+    sheet verilirse basılı altlığın fotoğrafları, verilmezse monitör deseni beklenir.
+    Çekim: ölçümdeki zoom ile 15-20 foto, farklı açılar (±30°), desen bazen kadraj
+    köşelerine gelecek şekilde. Reprojeksiyon hatası > 0.5 px ise uyarır."""
     try:
         paths = [Path(x) for x in (photo_paths or [])]
         if folder:
@@ -169,76 +209,38 @@ def calibrate_camera(phone_name: str, photo_paths: list[str] | None = None, fold
                             if q.suffix.lower() in (".jpg", ".jpeg", ".png", ".tif", ".tiff"))
         if not paths:
             return {"ok": False, "error": "fotoğraf verilmedi (photo_paths veya folder)"}
-        return {"ok": True, **calibrate(paths, phone_name)}
+        return {"ok": True, **calibrate(paths, phone_name, Sheet.load(sheet) if sheet else None)}
     except Exception as e:
         return _err(e)
 
 
 @mcp.tool()
-def make_reference_frame(name: str = "cerceve_a", outer_w_mm: float = 210, outer_h_mm: float = 210,
-                         marker_mm: float = 24):
-    """3D baskı referans çerçevesi üretir (ortası açık, kenarlarda ArUco marker'lar).
-    STL'ler + önizleme + frame.json. outer_*: yazıcı tablasına sığacak dış ölçü."""
-    try:
-        f = frame_mod.layout(name, outer_w_mm, outer_h_mm, marker_mm)
-        files = frame_mod.build(f, config.frames_dir() / name)
-        x0, y0, x1, y1 = f.window
-        return _with_images({"ok": True, "frame": name, "files": files, "n_markers": len(f.markers),
-                             "window_mm": [x1 - x0, y1 - y0], "talimat": [
-            f"Tek parça baskı: {Path(files['stl_all']).name}. Açık renk (beyaz/natürel) PLA, 0.2 mm katman, "
-            f"%100 dolgu. {f.base_mm} mm yükseklikte siyaha filament değişimi en iyi sonucu verir "
-            "(tek renk de arkadan ışıkta çalışır).",
-            "Çok malzemeli yazıcı varsa: _beyaz_taban.stl ve _siyah.stl ayrı gövdeler.",
-            "Baskıdan sonra pencerenin iç genişliğini ve yüksekliğini kumpasla ölçüp "
-            "set_frame_measurement ile girin (yazıcının ölçek hatası buradan düzeltilir).",
-            "İlk gerçek fotoğrafta marker algılamayı add_photos ile test edin."]}, files["preview_png"])
-    except Exception as e:
-        return _err(e)
-
-
-@mcp.tool()
-def set_frame_measurement(frame: str, window_w_mm: float, window_h_mm: float) -> dict:
-    """Basılmış çerçevenin pencere iç ölçüleri (kumpas). Marker koordinatları buna göre ölçeklenir."""
-    try:
-        f = frame_mod.Frame.load(frame)
-        f.measured_window = [float(window_w_mm), float(window_h_mm)]
-        f.save(config.frames_dir() / frame / "frame.json")
-        sx, sy = f.scale
-        out = {"ok": True, "scale_x": sx, "scale_y": sy}
-        if abs(sx - 1) > 0.01 or abs(sy - 1) > 0.01:
-            out["warning"] = "nominalden %1'den fazla fark: ölçüm doğru mu (iç çeneyle, pencere kenarından)?"
-        return out
-    except Exception as e:
-        return _err(e)
-
-
-@mcp.tool()
-def add_photos(project: str, paths: list[str], frame: str, kind: str = "silhouette",
+def add_photos(project: str, paths: list[str], sheet: str = "a4", kind: str = "silhouette",
                camera: str | None = None) -> dict:
-    """Fotoğrafları projeye kopyalar ve çerçeve marker'larını hızlıca arar.
+    """Fotoğrafları projeye kopyalar ve altlıktaki ChArUco köşelerini hızlıca sayar.
     kind: 'silhouette' (arkadan aydınlatma, Faz 1). camera: calibrate_camera adı; yoksa
     EXIF'ten tahmin (daha az hassas)."""
     try:
         if kind != "silhouette":
             return {"ok": False, "error": "Faz 1'de sadece 'silhouette' destekleniyor"}
         p = Project.open(project)
-        f = frame_mod.Frame.load(frame)
+        sh = Sheet.load(sheet)
         if camera:
             Camera.load(camera)
         out = []
         for src in paths:
             src = Path(src).expanduser()
             pid = p.add_photo(src, kind)
-            p.update_photo(pid, frame=frame, camera=camera)
+            p.update_photo(pid, sheet=sheet, camera=camera)
             g = cv2.cvtColor(imread(src), cv2.COLOR_BGR2GRAY)
-            found = detect_frame_markers(g, f)
+            _, ids = detect_sheet(g, sh)
             out.append({"id": pid, "file": src.name, "size": list(g.shape[::-1]),
-                        "markers_found": len(found), "markers_total": len(f.markers),
-                        "ok": len(found) >= 6})
+                        "charuco_corners": len(ids), "ok": len(ids) >= 40})
         bad = [o["id"] for o in out if not o["ok"]]
         res = {"ok": True, "photos": out}
         if bad:
-            res["warning"] = f"az marker bulunan fotolar: {bad} (çerçevenin tamamı kadrajda ve aydınlık olmalı)"
+            res["warning"] = (f"az ChArUco köşesi bulunan fotolar: {bad} (kağıdın tamamı kadrajda, düz ve "
+                              "arkadan aydınlatılmış olmalı)")
         return res
     except Exception as e:
         return _err(e)
@@ -246,7 +248,7 @@ def add_photos(project: str, paths: list[str], frame: str, kind: str = "silhouet
 
 @mcp.tool()
 def process_photos(project: str, photo_ids: list[str] | None = None):
-    """Her foto için: distorsiyon düzeltme, marker'lardan poz, mm/px, silüet maskesi,
+    """Her foto için: distorsiyon düzeltme, ChArUco köşelerinden poz, mm/px, silüet maskesi,
     debug görseli. Kalınlık (thickness) girilmişse mm/px üst yüz düzlemi içindir."""
     try:
         p = Project.open(project)

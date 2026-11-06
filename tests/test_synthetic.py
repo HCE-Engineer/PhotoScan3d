@@ -25,8 +25,8 @@ def test_synthetic(case, tmp_path):
 
 
 def test_part_touching_window_is_flagged(tmp_path):
-    s, _, _ = run(tmp_path, {**DEFAULT_PART, "place": (70.0, 72.0, 55.0)}, None, seed=9, verbose=False)
-    assert any("pencere kenarına" in w for w in s["warnings"])
+    s, _, _ = run(tmp_path, {**DEFAULT_PART, "place": (35.0, 60.0, 55.0)}, None, seed=9, verbose=False)
+    assert any("boş alanının kenarına" in w for w in s["warnings"])
 
 
 def test_uncalibrated_uncertainty_covers_error(tmp_path):

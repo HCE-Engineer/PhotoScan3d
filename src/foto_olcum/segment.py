@@ -1,4 +1,5 @@
-"""Backlit silhouette: the part is dark on a bright screen inside the frame window."""
+"""Backlit silhouette: the part is dark on the backlit paper inside the blank middle
+of the ChArUco sheet."""
 from dataclasses import dataclass, field
 
 import cv2
@@ -41,7 +42,7 @@ def backlit(gray: np.ndarray, roi: np.ndarray, min_hole_px: int = 30) -> Silhoue
     mask = (lab == part).astype(np.uint8) * 255
     edge = cv2.morphologyEx(roi, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
     if (mask & edge).any():
-        warnings.append("parça pencere kenarına değiyor veya çok yakın: kenar ölçüleri güvenilmez")
+        warnings.append("parça altlığın boş alanının kenarına (desene) değiyor veya çok yakın: kenar ölçüleri güvenilmez")
     contours, hier = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
     hier = hier[0]
     outer_i = max((i for i in range(len(contours)) if hier[i][3] < 0), key=lambda i: cv2.contourArea(contours[i]))

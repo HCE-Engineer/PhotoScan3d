@@ -16,8 +16,8 @@ def calibration_dir() -> Path:
     return d
 
 
-def frames_dir() -> Path:
-    d = projects_root() / "_cerceveler"
+def sheets_dir() -> Path:
+    d = projects_root() / "_altliklar"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

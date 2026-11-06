@@ -1,4 +1,4 @@
-"""Image (undistorted pixels) <-> frame plane z = h, and the silhouette footprint rule."""
+"""Image (undistorted pixels) <-> sheet plane z = h, and the silhouette footprint rule."""
 import cv2
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
@@ -8,7 +8,7 @@ CONVEX_KAPPA = 0.05  # 1/mm: curvature (radius 20 mm) at which a wall counts as 
 
 
 def backproject(uv, K, rvec, tvec, z: float) -> np.ndarray:
-    """Intersect camera rays through pixels `uv` (N,2) with the frame plane z = const."""
+    """Intersect camera rays through pixels `uv` (N,2) with the sheet plane z = const."""
     R = cv2.Rodrigues(np.asarray(rvec, float))[0]
     t = np.asarray(tvec, float).reshape(3)
     C = -R.T @ t

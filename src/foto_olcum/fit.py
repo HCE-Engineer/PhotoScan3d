@@ -10,6 +10,7 @@ from scipy import ndimage as nd
 from scipy.optimize import minimize_scalar
 
 CORR = 3.0
+MERGE_DEG = 1.0     # adjacent straight runs closer than this in direction are one edge
 
 
 @dataclass
@@ -183,7 +184,21 @@ def segment(points: np.ndarray, ds: float, noise_mm: float, min_line_mm: float =
     if len(runs) < 2:
         return [], [], p
     trim = max(1, int(round(0.3 / ds)))
-    lines = [fit_line(p[a + trim:b - trim] if b - a > 2 * trim + 3 else p[a:b], (a, b)) for a, b in runs]
+    fit_run = lambda a, b: fit_line(p[a + trim:b - trim] if b - a > 2 * trim + 3 else p[a:b], (a, b))
+    lines = [fit_run(a, b) for a, b in runs]
+    # a curvature blip can split one straight edge; merge neighbours that are collinear
+    merged = True
+    while merged and len(runs) > 2:
+        merged = False
+        for i in range(len(runs) - 1):
+            a, b = lines[i], lines[i + 1]
+            ang = np.degrees(np.arccos(np.clip(abs(a.u @ b.u), 0, 1)))
+            off = abs((b.c - a.c) @ a.n)
+            if ang < MERGE_DEG and off < max(4 * noise_mm, 0.05):
+                runs[i:i + 2] = [(runs[i][0], runs[i + 1][1])]
+                lines[i:i + 2] = [fit_run(*runs[i])]
+                merged = True
+                break
     # orient lines along the contour direction
     for ln, (a, b) in zip(lines, runs):
         if np.dot(p[b - 1] - p[a], ln.u) < 0:

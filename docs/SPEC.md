@@ -44,28 +44,32 @@ debug görsellerini kontrol etmek içindir.
 
 ## 4. Referans ve kalibrasyon `[KARAR]`
 
-Hüseyin'in kağıt yazıcısı yok, 3D yazıcısı ve monitörü var. Bu yüzden:
+İlk denemede 3D baskı çerçeve tasarlandı; Hüseyin baskı toleransı/ölçek kayması yüzünden
+**A4'e basılı ChArUco altlığa** dönülmesini istedi (06.11.2026). Kararlar:
 
-- **Kamera kalibrasyonu:** ChArUco deseni PNG olarak üretilir, **monitörde tam ekran** gösterilir,
-  telefonla 15–20 açıdan çekilir. Kamera iç parametreleri (K, distorsiyon) desenin fiziksel
-  boyutundan bağımsızdır, bu yüzden monitör yeterli. Kalibrasyon yoksa: markerlardan tek
-  görüntüde odak uzaklığı tahmini + distorsiyon sıfır, uyarıyla.
-- **Referans çerçeve (3D baskı):** ortası boş, kenarlarında ArUco marker'lar olan plaka.
-  Arkadan aydınlatmada (monitör/tablet beyaz ekran) parça ortadaki pencereye konur.
-  - Marker'ın beyaz hücreleri 0.4 mm ince (ışık geçer), siyah hücreleri kalın. Tek renk açık
-    renkli PLA ile arkadan ışıkta kontrast verir; 0.4 mm'de siyaha filament değişimi en iyisi.
-  - Baskı ölçüsü ±0.1–0.2 mm ve yazıcının XY ölçeği %0.2–0.5 sapabilir: çerçevenin
-    **pencere iç genişliği ve yüksekliği kumpasla ölçülüp** girilir, marker koordinatları buna
-    göre ölçeklenir. Nominal CAD sayısından ±0.1 mm çıkmaz.
-  - Gerçek baskının fotoğrafında marker algılama test edilmeden üstüne bina edilmez.
+- **Altlık:** 15×22 kare, kare 12.7 mm (600 dpi'da tam 300 px, PDF'te yuvarlama yok),
+  marker 9.525 mm, `DICT_4X4_250`. Kenarlarda 2 karelik desen, ortada 139.7×228.6 mm boş alan.
+  PDF tam A4, "%100 / gerçek boyut" basılır. Kağıt 0.1 mm: marker yüksekliği kaynaklı
+  perspektif payı yok, altlık düzlemi z = 0.
+- **Arkadan aydınlatma:** kağıt beyaz ekranın (monitör/tablet) üstüne konur; kağıt parlar,
+  basılı kareler ve parça koyu kalır. Parça ortadaki boş alana konur (kesmeye gerek yok).
+- **Poz:** ChArUco dama köşelerinden (`CharucoDetector`) solvePnP. Dama köşeleri tek ArUco
+  köşesinden çok daha hassas (sentetikte reprojeksiyon 0.36 → 0.04 px).
+  OpenCV köşe koordinatları sol üstten y aşağı; altlık sistemi y yukarı: `y = H - y_board`.
+- **Yazıcı ölçeği (%0.5–1):** altlıkta A–B (x) ve A–C (y) okları, 10 kare = 127.0 mm; kare
+  köşesinden köşesine kumpasla ölçülüp `set_sheet_measurement` ile girilir, köşe koordinatları
+  buna göre ölçeklenir. Girilmezse ±%1 ölçek belirsizliği eklenir ve uyarı verilir.
+- **Kamera kalibrasyonu:** aynı basılı altlığın 15–20 fotoğrafı (`calibrate_camera(sheet=...)`)
+  ya da monitörde gösterilen desen. Kalibrasyon yoksa: EXIF odak + distorsiyon sıfır, uyarıyla.
 - Bozuk para / rulman: yedek ölçek doğrulaması (bilinen çap).
 
 ## 5. Çekim protokolü (araç anlatabilmeli)
 
 1. Kalibrasyon (telefon başına bir kez, aynı zoom ve odak modu).
-2. **Silüet (2.5D ana yöntem):** beyaz ekran + çerçeve, parça pencerede, oturduğu yüz aşağıda.
-   Kamera yaklaşık dik, ≥40 cm uzaktan + zoom. Parçanın tamamı ışıklı fonun önünde.
-3. Genel 3D çekim (Faz 3), yakın çekim (Faz 4): her karede marker.
+2. **Silüet (2.5D ana yöntem):** beyaz ekran + basılı altlık, parça ortadaki boş alanda,
+   oturduğu yüz aşağıda, desene değmeden. Kamera yaklaşık dik, ≥40 cm uzaktan + zoom.
+   Altlığın tamamı kadrajda.
+3. Genel 3D çekim (Faz 3), yakın çekim (Faz 4): her karede altlık deseni.
 4. Özgün çözünürlükte dosya (sohbete yapıştırma küçültür). Zoom kalibrasyondan farklıysa uyarı.
 
 ## 6. Ölçüm modeli (raporlardan öğrenilenler)
@@ -107,8 +111,8 @@ src/foto_olcum/
   server.py        MCPServer tool tanımları (stdout'a yazmaz)
   config.py        yollar, FreeCAD yolu
   project.py       proje klasörü, measurements.json, model.json, log.jsonl
-  frame.py         referans çerçeve: marker yerleşimi, STL üretimi, ölçülen pencereyle ölçekleme
-  calib.py         ChArUco deseni, kalibrasyon, kalibrasyonsuz odak tahmini, poz (solvePnP)
+  board.py         A4 ChArUco altlık: PDF, köşe koordinatları, kumpasla ölçek düzeltmesi
+  calib.py         kalibrasyon (altlık veya monitör deseni), EXIF yedeği, poz (solvePnP)
   geometry.py      görüntü ↔ düzlem (z=t), perspektif iz seçimi
   segment.py       arkadan aydınlatmalı silüet maskesi
   edges.py         alt-piksel kenar
@@ -156,7 +160,7 @@ tüm kısıtlar expression ile bağlı, sketch'ler tam kısıtlı, STEP + STL.
 |---|---|
 | `new_project`, `status` | 0 |
 | `make_calibration_pattern`, `calibrate_camera` | 1 |
-| `make_reference_frame`, `set_frame_measurement` | 1 |
+| `make_reference_sheet`, `set_sheet_measurement` | 1 |
 | `add_photos`, `process_photos`, `extract_features_2d`, `measure` | 1 |
 | `set_measurement` (değer, kilit, malzeme) | 1 |
 | `set_model`, `build_freecad`, `render_and_compare` | 1 |
@@ -169,7 +173,7 @@ tüm kısıtlar expression ile bağlı, sketch'ler tam kısıtlı, STEP + STL.
 ## 11. Fazlar
 
 - **Faz 0:** iskelet, MCP server, `new_project`/`status`, FreeCAD smoke build (STEP döner).
-- **Faz 1:** çerçeve STL, kalibrasyon, backlit silüet, z=t düzlemi + perspektif iz seçimi,
+- **Faz 1:** A4 ChArUco altlık, kalibrasyon, backlit silüet, z=t düzlemi + perspektif iz seçimi,
   doğru/daire fit, belirsizlik, plaka + delik → FreeCAD + Spreadsheet + STEP, compare + fark görseli.
 - **Faz 2:** teknik resim + tablo, tutarlılık kontrolleri, malzeme B kalibrasyonu, snap, 2D şablon, SKILL.md.
 - **Faz 3:** çok görüşlü prizmatik (cep, kanal, pah, radyus).
