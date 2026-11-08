@@ -23,11 +23,28 @@ def roi_mask(shape, window_px: np.ndarray) -> np.ndarray:
     return roi
 
 
+def flatten(gray: np.ndarray, roi: np.ndarray) -> np.ndarray:
+    """Divide out the slowly varying backlight brightness (a laptop LCD seen at an angle
+    darkens strongly across the screen), so one global threshold separates part and
+    background everywhere. The background is estimated by a large grey closing, which
+    fills in the dark part with the surrounding bright screen."""
+    s = 8
+    small = cv2.resize(gray, None, fx=1 / s, fy=1 / s, interpolation=cv2.INTER_AREA)
+    ys, xs = np.nonzero(roi[::s, ::s])
+    span = min(np.ptp(xs), np.ptp(ys)) if len(xs) else min(small.shape)
+    k = max(15, int(span * 0.45)) | 1
+    bg = cv2.morphologyEx(small, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+    bg = cv2.GaussianBlur(bg.astype(np.float32), (0, 0), k / 6)
+    bg = cv2.resize(bg, (gray.shape[1], gray.shape[0]), interpolation=cv2.INTER_LINEAR)
+    return np.clip(gray.astype(np.float32) / np.maximum(bg, 1.0) * 200.0, 0, 255).astype(np.uint8)
+
+
 def backlit(gray: np.ndarray, roi: np.ndarray, min_hole_px: int = 30) -> Silhouette:
     warnings = []
-    vals = gray[roi > 0]
+    flat = flatten(gray, roi)
+    vals = flat[roi > 0]
     thr, _ = cv2.threshold(vals.reshape(-1, 1), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    dark = ((gray < thr) & (roi > 0)).astype(np.uint8) * 255
+    dark = ((flat < thr) & (roi > 0)).astype(np.uint8) * 255
     dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     n, lab, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
     if n <= 1:

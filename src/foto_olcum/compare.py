@@ -148,3 +148,99 @@ def compare_project(p: Project) -> dict:
     p.update_state(last_compare_summary=summary)
     p.log("render_and_compare", summary)
     return {"ok": True, "summary": summary, "photos": res}
+
+
+# --- an existing STL/CAD against the photos -------------------------------------------
+
+UPS = {"+x": (0, 1), "-x": (0, -1), "+y": (1, 1), "-y": (1, -1), "+z": (2, 1), "-z": (2, -1)}
+
+
+def _stand(mesh: trimesh.Trimesh, up: str) -> np.ndarray:
+    """Vertices rotated so that axis `up` points along +z, resting on z = 0, centred in xy."""
+    ax, sgn = UPS[up]
+    v = mesh.vertices.copy()
+    if ax == 0:
+        R = np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]]) if sgn > 0 else np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]])
+    elif ax == 1:
+        R = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]]) if sgn > 0 else np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+    else:
+        R = np.eye(3) if sgn > 0 else np.diag([1.0, -1.0, -1.0])
+    v = v @ R.T
+    v[:, 2] -= v[:, 2].min()
+    v[:, :2] -= (v[:, :2].min(0) + v[:, :2].max(0)) / 2
+    return v
+
+
+def _place_xy(v, x, y, yaw_deg):
+    a = np.radians(yaw_deg)
+    c, s = np.cos(a), np.sin(a)
+    out = v.copy()
+    out[:, 0] = c * v[:, 0] - s * v[:, 1] + x
+    out[:, 1] = s * v[:, 0] + c * v[:, 1] + y
+    return out
+
+
+def _sil(world, faces, pose, crop, shape):
+    x0, y0, x1, y1 = crop
+    uv = geometry.project(world, pose.K, pose.rvec, pose.tvec)
+    m = np.zeros((y1 - y0, x1 - x0), np.uint8)
+    tri = np.round((uv[faces] - [x0, y0]) * 4).astype(np.int32)
+    for t3 in tri:
+        cv2.fillConvexPoly(m, t3, 1, lineType=cv2.LINE_8, shift=2)
+    return m
+
+
+def register_stl(p: Project, pid: str, mesh: trimesh.Trimesh, ups=None) -> dict:
+    """Find how the part rests on the sheet: which axis is up, xy position and yaw, by
+    maximising silhouette overlap with the photo. The part must rest on a flat face."""
+    from scipy.optimize import minimize
+    info = p.photos()[pid]
+    pose = Pose.from_json(info["pose"])
+    mask = cv2.imread(str(p.path(f"masks/{pid}.png")), 0) > 0
+    ys, xs = np.nonzero(mask)
+    pad = 120
+    crop = (max(0, xs.min() - pad), max(0, ys.min() - pad), min(mask.shape[1], xs.max() + pad),
+            min(mask.shape[0], ys.max() + pad))
+    sub = mask[crop[1]:crop[3], crop[0]:crop[2]]
+    if len(mesh.faces) > 6000:
+        mesh = mesh.simplify_quadric_decimation(face_count=6000)
+
+    def iou(v, q):
+        m = _sil(_place_xy(v, *q), mesh.faces, pose, crop, mask.shape) > 0
+        inter = np.count_nonzero(m & sub)
+        return inter / max(np.count_nonzero(m | sub), 1)
+
+    best = None
+    for up in (ups or UPS):
+        v = _stand(mesh, up)
+        cz = v[:, 2].max() / 2
+        c = geometry.backproject([[xs.mean(), ys.mean()]], pose.K, pose.rvec, pose.tvec, cz)[0]
+        for yaw in range(0, 360, 15):
+            s = iou(v, (c[0], c[1], yaw))
+            if best is None or s > best[0]:
+                best = (s, up, (c[0], c[1], yaw))
+    s, up, q0 = best
+    v = _stand(mesh, up)
+    res = minimize(lambda q: -iou(v, q), q0, method="Nelder-Mead",
+                   options={"initial_simplex": [q0, q0 + np.r_[1.5, 0, 0], q0 + np.r_[0, 1.5, 0], q0 + np.r_[0, 0, 6]],
+                            "xatol": 0.01, "fatol": 1e-5, "maxiter": 400})
+    x, y, yaw = res.x
+    return {"up": up, "x_mm": float(x), "y_mm": float(y), "yaw_deg": float(yaw % 360), "iou": float(-res.fun),
+            "vertices": _place_xy(v, x, y, yaw), "faces": mesh.faces}
+
+
+def compare_stl(p: Project, stl_path: str, photo_ids=None, up: str | None = None) -> dict:
+    """Register an existing STL to each photo and report where the real part deviates."""
+    mesh = trimesh.load(stl_path, force="mesh")
+    out = []
+    for pid, info in p.photos().items():
+        if photo_ids and pid not in photo_ids or not info.get("processed"):
+            continue
+        reg = register_stl(p, pid, mesh, [up] if up else None)
+        placed = trimesh.Trimesh(reg.pop("vertices"), reg.pop("faces"), process=False)
+        p.update_photo(pid, part_frame={"origin_frame_mm": [0.0, 0.0], "x_dir": [1.0, 0.0], "origin": "altlık"})
+        r = compare_photo(p, pid, placed, [])
+        r["registration"] = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in reg.items()}
+        out.append(r)
+    p.log("compare_stl", {"stl": stl_path, "photos": [r["photo"] for r in out]})
+    return {"ok": True, "photos": out}

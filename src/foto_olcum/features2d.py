@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from . import edges, fit, geometry, segment
-from .calib import Pose, estimate_pose
+from .calib import Pose, estimate_pose, unshear, unshear_image
 from .board import Sheet
 from .imaging import bbox_crop, put_label, save_debug, undistorted
 from .project import Measurement, Project
@@ -28,20 +28,31 @@ def _photo_paths(p: Project, pid: str):
 def process_photo(p: Project, pid: str) -> dict:
     info, raw = _photo_paths(p, pid)
     sheet = Sheet.load(info["sheet"])
-    img, K, cam = undistorted(raw, info.get("camera"))
+    img, K, cam, raw_img, dist = undistorted(raw, info.get("camera"))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    und_path = p.path(f"photos/undistorted/{pid}.png")
-    und_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(und_path), img)
-    pose = estimate_pose(gray, K, sheet)
+    raw_gray = cv2.cvtColor(raw_img, cv2.COLOR_BGR2GRAY)
+    hull = cam.hull_for(raw_gray.shape[1], raw_gray.shape[0])
+    pose = estimate_pose(gray, K, sheet, raw_gray=raw_gray, dist=dist, hull=hull)
     warnings = []
     if cam.source != "charuco":
         warnings.append("kamera kalibrasyonu yok: odak EXIF'ten tahmin edildi, distorsiyon sıfır "
                         "varsayıldı. Kenarlarda ±0.3 mm'ye kadar ek hata olabilir; calibrate_camera önerilir.")
     if pose.rms_px > 1.0:
         warnings.append(f"marker reprojeksiyon hatası yüksek ({pose.rms_px:.2f} px)")
+    K0, K = K, pose.K                                 # K: with the per-photo focal correction
+    if any(pose.shear):
+        img = unshear_image(img, pose.shear, K0[1, 2])
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    und_path = p.path(f"photos/undistorted/{pid}.png")      # the ideal pinhole image used downstream
+    und_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(und_path), img)
     window_px = geometry.project(np.c_[sheet.window_poly(shrink=2.0), np.zeros(4)], K, pose.rvec, pose.tvec)
     roi = segment.roi_mask(gray.shape, window_px)
+    if hull is not None:
+        # outside the calibrated region the undistorted image is unreliable
+        hu = cv2.undistortPoints(hull.reshape(-1, 1, 2), K0, dist, P=K0).reshape(-1, 2)
+        hu = unshear(hu, pose.shear, K0[1, 2])
+        roi &= segment.roi_mask(gray.shape, hu)
     sil = segment.backlit(gray, roi)
     warnings += sil.warnings
     cv2.imwrite(str(p.path(f"masks/{pid}.png")), sil.mask)
@@ -59,11 +70,19 @@ def process_photo(p: Project, pid: str) -> dict:
         cv2.drawContours(dbg, [h.reshape(-1, 1, 2)], -1, (0, 140, 255), 2)
     cv2.polylines(dbg, [np.round(window_px).astype(np.int32)], True, (255, 0, 0), 2)
     out = save_debug(dbg, p.path(f"debug/{pid}_maske.png"), bbox_crop(window_px, gray.shape))
-    p.update_photo(pid, pose=pose.to_json(), camera_source=cam.source, f_sigma_rel=cam.f_sigma_rel, mm_per_px=mmpp,
+    f_sigma = max(cam.f_sigma_rel, pose.f_sigma_rel)
+    p.update_photo(pid, pose=pose.to_json(), camera_source=cam.source, f_sigma_rel=f_sigma, mm_per_px=mmpp,
                    image_size=list(gray.shape[::-1]), processed=True)
     if not sheet.measured_ref:
         warnings.append("altlığın baskı ölçeği girilmedi (set_sheet_measurement): ölçülerde ±%1 ölçek belirsizliği var")
+    if any(abs(v) > 0.002 for v in pose.shear):
+        warnings.append(f"elde çekim titremesi (rolling shutter) düzeltildi: satır kayması "
+                        f"{pose.shear[0] * 1000:+.1f}/{pose.shear[1] * 1000:+.1f} px/1000 satır; mümkünse telefonu sabitleyin")
+    if abs(pose.f_scale - 1) > 0.005:
+        warnings.append(f"odak bu fotoğrafta kalibrasyondan %{(pose.f_scale - 1) * 100:+.1f} farklı (otomatik odak); "
+                        "fotoğraftan düzeltildi")
     return {"photo": pid, "pose_rms_px": round(pose.rms_px, 3), "charuco_corners": pose.n_corners,
+            "f_scale": round(pose.f_scale, 4),
             "camera_source": cam.source, "tilt_deg": round(tilt, 1),
             "camera_distance_mm": round(float(np.linalg.norm(pose.camera_center)), 0),
             "mm_per_px": round(mmpp, 4), "scale_sigma_rel": round(pose.scale_sigma_rel, 5),

@@ -19,12 +19,12 @@ def camera_for(photo_path, camera_name: str | None, w: int, h: int) -> tuple[np.
 
 
 def undistorted(photo_path, camera_name):
-    img = imread(photo_path)
-    h, w = img.shape[:2]
+    """(undistorted image, K, camera, raw image, dist)."""
+    raw = imread(photo_path)
+    h, w = raw.shape[:2]
     K, dist, cam = camera_for(photo_path, camera_name, w, h)
-    if np.any(np.abs(dist) > 0):
-        img = cv2.undistort(img, K, dist)
-    return img, K, cam
+    img = cv2.undistort(raw, K, dist) if np.any(np.abs(dist) > 0) else raw
+    return img, K, cam, raw, dist
 
 
 def save_debug(img: np.ndarray, path: Path, crop=None) -> dict:
