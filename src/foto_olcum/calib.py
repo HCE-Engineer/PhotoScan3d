@@ -98,7 +98,10 @@ def calibrate(paths: list[Path], name: str, sheet: Sheet | None = None) -> dict:
         used.append(str(p))
     if len(objs) < 6:
         raise ValueError(f"en az 6 kullanılabilir fotoğraf gerekli, {len(objs)} var. Atlananlar: {skipped}")
-    rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(objs, imgs, size, None, None)
+    # k3 left out: a phone calibration rarely covers the image corners, and a free k3 then
+    # invents large corner distortion without improving the measured area (real S24 FE
+    # photos: same hold-out accuracy, 100 px of made-up corner warp)
+    rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(objs, imgs, size, None, None, flags=cv2.CALIB_FIX_K3)
     per = []
     for o, i, r, t in zip(objs, imgs, rvecs, tvecs):
         proj, _ = cv2.projectPoints(o, r, t, K, dist)
@@ -109,7 +112,8 @@ def calibrate(paths: list[Path], name: str, sheet: Sheet | None = None) -> dict:
     warn = []
     if rms > 0.5:
         warn.append(f"reprojeksiyon hatası yüksek ({rms:.2f} px > 0.5): bulanık ya da odak/zoom "
-                    "değişen fotoğrafları çıkarıp tekrar deneyin")
+                    "değişen fotoğrafları çıkarıp tekrar deneyin; desenin fotoğraf kenar ve köşelerine de "
+                    "geldiği kareler ekleyin")
     worst = sorted(zip(per, used), reverse=True)[:3]
     return {"rms_px": float(rms), "n_used": len(objs), "skipped": skipped, "file": str(path),
             "image_size": list(size), "fx": float(K[0, 0]), "fy": float(K[1, 1]),
