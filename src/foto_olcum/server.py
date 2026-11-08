@@ -321,6 +321,7 @@ def measure(project: str, photo_id: str, a: str, b: str | None = None, store_as:
             label: str = "") -> dict:
     """extract_features_2d sonucundan ölçü: a, b = 'V3', 'H1', 'L2' gibi adlar.
     V-V / H-H / V-H: merkezler arası mesafe (+ dx, dy); L-V / L-H: doğruya dik mesafe;
+    yuvarlak parçada O = dış çember: tek O dış çap, O-H eşmerkezlilik (merkez kaçıklığı);
     L-L: paralel kenarlar arası mesafe ve açı; tek H: çap; tek V: radyus.
     store_as verilirse sonuç photo_coarse ölçüsü olarak kaydedilir."""
     try:

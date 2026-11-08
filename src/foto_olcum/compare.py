@@ -24,6 +24,9 @@ def _feature_geometry(p: Project):
     vals = {k: m.value_mm for k, m in p.measurements().items()}
     out = []
     for f in p.model()["features"]:
+        if "circle" in f:
+            c = (evaluate(f["circle"]["center"][0], vals), evaluate(f["circle"]["center"][1], vals))
+            out.append((f"{f['id']} dış çember", "circle", (c, evaluate(f["circle"]["diameter"], vals) / 2)))
         if "profile" in f:
             pts = [(evaluate(v[0], vals), evaluate(v[1], vals)) for v in f["profile"]]
             for i in range(len(pts)):

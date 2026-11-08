@@ -17,10 +17,11 @@ from .board import Sheet
 
 @dataclass
 class Part:
-    outline: list                     # [(x, y, r)] CCW in part coords, r = corner radius
+    outline: list | None = None       # [(x, y, r)] CCW in part coords, r = corner radius
     holes: list = field(default_factory=list)    # [(cx, cy, d)]
     thickness: float = 5.0
     place: tuple = (60.0, 70.0, 10.0)            # x, y, rotation_deg in sheet coords
+    outer_dia: float = 0.0            # round part (disc, ring, bearing) centred on the part origin
 
 
 @dataclass
@@ -57,7 +58,9 @@ def _proj(cam: Cam, pts3):
 
 
 def outline_points(part: Part, step_deg: float = 2.0):
-    """Dense CCW outline in part coordinates with tangent fillet arcs."""
+    """Dense CCW outline in part coordinates with tangent fillet arcs (or a circle)."""
+    if part.outer_dia:
+        return _circle(0.0, 0.0, part.outer_dia, 720)
     v = [(x, y) for x, y, _ in part.outline]
     out = []
     n = len(v)

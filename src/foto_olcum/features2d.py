@@ -139,20 +139,39 @@ def extract(p: Project, pid: str, axis_line: int | None = None, origin_corner: i
     opts, oamb, oimg = outer
     ds = max(c.mmpp, 0.05)
     lines, corners, samples = fit.segment(opts, ds, noise_mm=0.3 * c.mmpp, sharp_r=max(0.3, 3 * c.mmpp))
-    if len(lines) < 2:
-        raise ValueError("dış konturda düz kenar bulunamadı (dönel/serbest form parça şimdilik desteklenmiyor)")
-    c.noise = float(np.median([ln.rms for ln in lines]))
+    amb_med = float(np.median(oamb))
+    round_outer = None
+    # a round part (disc, ring, bearing) is recognised by a circle fit first: large radii
+    # would otherwise pass the straightness test and be cut into lines
+    circ = fit.fit_circle(opts)
+    if circ.rms <= max(0.05, 0.3 * c.mmpp, amb_med * c.f_rel):
+        round_outer = circ
+        lines, corners = [], []
+        c.noise = circ.rms
+    elif len(lines) < 2:
+        raise ValueError(f"dış kontur ne düz kenarlı ne de daire (daire uyum artığı {circ.rms:.3f} mm): "
+                         "serbest form parça şimdilik desteklenmiyor")
+    else:
+        c.noise = float(np.median([ln.rms for ln in lines]))
 
-    # part frame: x along the chosen (default: longest) line, y into the material (CCW contour)
-    ai = int(np.argmax([ln.length for ln in lines])) if axis_line is None else axis_line - 1
-    if not 0 <= ai < len(lines):
-        raise ValueError(f"axis_line 1..{len(lines)} olmalı")
-    ax = lines[ai]
-    oc = (ai - 1) % len(lines) if origin_corner is None else origin_corner - 1
-    if not 0 <= oc < len(corners):
-        raise ValueError(f"origin_corner 1..{len(corners)} olmalı")
-    origin = corners[oc].p
-    ux = ax.u
+    if round_outer is not None:
+        # part frame: origin at the outer circle centre, axes along the sheet
+        ai = oc = -1
+        ax_sigma_angle = 0.0
+        origin = round_outer.c
+        ux = np.array([1.0, 0.0])
+    else:
+        # part frame: x along the chosen (default: longest) line, y into the material (CCW contour)
+        ai = int(np.argmax([ln.length for ln in lines])) if axis_line is None else axis_line - 1
+        if not 0 <= ai < len(lines):
+            raise ValueError(f"axis_line 1..{len(lines)} olmalı")
+        ax = lines[ai]
+        ax_sigma_angle = ax.sigma_angle
+        oc = (ai - 1) % len(lines) if origin_corner is None else origin_corner - 1
+        if not 0 <= oc < len(corners):
+            raise ValueError(f"origin_corner 1..{len(corners)} olmalı")
+        origin = corners[oc].p
+        ux = ax.u
     uy = np.array([-ux[1], ux[0]])
 
     def to_part(q):
@@ -160,12 +179,11 @@ def extract(p: Project, pid: str, axis_line: int | None = None, origin_corner: i
         return np.array([d @ ux, d @ uy])
 
     order = [(oc + k) % len(corners) for k in range(len(corners))]
-    amb_med = float(np.median(oamb))
     verts = []
     for k, ci in enumerate(order, start=1):
         cr = corners[ci]
         xy = to_part(cr.p)
-        rot = abs(xy[0]) * ax.sigma_angle        # axis direction uncertainty
+        rot = abs(xy[0]) * ax_sigma_angle        # axis direction uncertainty
         stat = np.hypot(cr.sigma_p if np.isfinite(cr.sigma_p) else 0.5, corners[oc].sigma_p)
         amb_v = max(amb_med, float(oamb[np.argmin(np.linalg.norm(opts - cr.p, axis=1))]))
         sx = float(np.sqrt(stat ** 2 + _sys_sigma(c, xy[0], 2, amb_v) ** 2))
@@ -190,10 +208,18 @@ def extract(p: Project, pid: str, axis_line: int | None = None, origin_corner: i
         if circ.rms < circ_tol and circ.r > 0.5:
             xy = to_part(circ.c)
             sc = float(np.sqrt(circ.sigma_c ** 2 + _sys_sigma(c, np.hypot(*xy), 1, float(np.median(hamb))) ** 2
-                               + (abs(xy[0]) * ax.sigma_angle) ** 2))
+                               + (abs(xy[0]) * ax_sigma_angle) ** 2))
             sd = float(np.sqrt((2 * circ.sigma_r) ** 2 + _sys_sigma(c, 2 * circ.r, 2, float(np.median(hamb))) ** 2))
-            holes.append({"x": float(xy[0]), "y": float(xy[1]), "dia": 2 * circ.r, "sigma_xy": sc,
-                          "sigma_dia": sd, "fit_rms_mm": round(circ.rms, 4), "img": himg})
+            hole = {"x": float(xy[0]), "y": float(xy[1]), "dia": 2 * circ.r, "sigma_xy": sc,
+                    "sigma_dia": sd, "fit_rms_mm": round(circ.rms, 4), "img": himg}
+            if round_outer is not None:
+                # concentricity: centre offset from the outer circle; scale errors cancel. The
+                # floor covers what the fit cannot see: different edge chamfers on the outer
+                # and inner wall shift their silhouettes differently in a tilted view
+                hole["concentricity_mm"] = float(np.hypot(*xy))
+                hole["sigma_concentricity_mm"] = float(np.sqrt(circ.sigma_c ** 2 + round_outer.sigma_c ** 2
+                                                               + (0.25 * c.mmpp) ** 2))
+            holes.append(hole)
         else:
             hl, hcn, _ = fit.segment(hpts, ds, noise_mm=c.noise, sharp_r=max(0.3, 3 * c.mmpp))
             pockets.append({"n_lines": len(hl), "circle_rms_mm": round(circ.rms, 4),
@@ -206,14 +232,26 @@ def extract(p: Project, pid: str, axis_line: int | None = None, origin_corner: i
     for j, pk in enumerate(pockets, 1):
         pk["name"] = f"K{j}"
 
-    debug = _draw(img, c, oimg, lines, corners, order, holes, pockets, origin, ux, uy, samples, p, pid)
+    outer_info = {"n_lines": len(lines)}
+    if round_outer is not None:
+        d = 2 * round_outer.r
+        res_r = np.linalg.norm(opts - round_outer.c, axis=1) - round_outer.r
+        sm = np.convolve(np.r_[res_r[-5:], res_r, res_r[:5]], np.ones(11) / 11, "valid")   # ~1.5 px smoothing
+        outer_info = {"shape": "circle", "dia": d,
+                      "sigma_dia": float(np.sqrt((2 * round_outer.sigma_r) ** 2 + _sys_sigma(c, d, 2, amb_med) ** 2)),
+                      "sigma_center": round_outer.sigma_c, "fit_rms_mm": round_outer.rms,
+                      "roundness_pv_mm": float(sm.max() - sm.min()),
+                      "roundness_note": "en büyük - en küçük yarıçap (ölçüm gürültüsünü de içerir; üst sınır)"}
+    debug = _draw(img, c, oimg, lines, corners, order, holes, pockets, origin, ux, uy, samples, p, pid,
+                  outer_label=f"O D{2 * round_outer.r:.3f}" if round_outer is not None else None)
     unexplained = [v["name"] for v in verts if not v["explained"]]
     result = {
         "photo": pid, "thickness_mm": c.t, "mm_per_px": round(c.mmpp, 4),
         "edge_noise_mm": round(c.noise, 4),
-        "part_frame": {"axis_line": ai + 1, "origin_corner": oc + 1,
+        "part_frame": {"axis_line": ai + 1 if ai >= 0 else None, "origin_corner": oc + 1 if oc >= 0 else None,
+                       "origin": "dış çember merkezi" if round_outer is not None else "köşe",
                        "origin_frame_mm": origin.round(4).tolist(), "x_dir": ux.round(6).tolist()},
-        "outer": {"n_lines": len(lines),
+        "outer": {**{k: (round(v, 4) if isinstance(v, float) else v) for k, v in outer_info.items()},
                   "lines": [{"name": f"L{i + 1}", "length_mm": round(ln.length, 3), "rms_mm": round(ln.rms, 4),
                              "point": to_part(ln.c).round(4).tolist(),
                              "dir": [round(float(ln.u @ ux), 6), round(float(ln.u @ uy), 6)],
@@ -235,14 +273,17 @@ def extract(p: Project, pid: str, axis_line: int | None = None, origin_corner: i
     p.update_photo(pid, part_frame=result["part_frame"])
     (p.path(f"debug/{pid}_ozellikler.json")).write_text(json.dumps(result, indent=1, ensure_ascii=False), encoding="utf-8")
     if create_measurements:
-        made, model = _measurements(p, pid, verts, holes, material, debug["preview"])
+        made, model = _measurements(p, pid, verts, holes, material, debug["preview"], outer_info)
         result["measurements"] = made
         result["suggested_model"] = model
     return result
 
 
-def _measurements(p, pid, verts, holes, material, evidence):
+def _measurements(p, pid, verts, holes, material, evidence, outer_info=None):
     items, prof = [], []
+    if outer_info and outer_info.get("shape") == "circle":
+        items.append(Measurement("o_dia", outer_info["dia"], outer_info["sigma_dia"], "photo_coarse",
+                                 "Dış çap", material=material, feature_ref="outer", evidence=[evidence]))
     for k, v in enumerate(verts):
         vid = f"o_v{k + 1}"
         if k == 0:
@@ -264,7 +305,11 @@ def _measurements(p, pid, verts, holes, material, evidence):
                                      material=material, feature_ref="outer", evidence=[evidence]))
             vert.append(rid)
         prof.append(vert)
-    feats = [{"id": "body", "type": "pad", "plane": "XY", "profile": prof, "length": "thickness"}]
+    if outer_info and outer_info.get("shape") == "circle":
+        feats = [{"id": "body", "type": "pad", "plane": "XY", "circle": {"center": [0, 0], "diameter": "o_dia"},
+                  "length": "thickness"}]
+    else:
+        feats = [{"id": "body", "type": "pad", "plane": "XY", "profile": prof, "length": "thickness"}]
     for j, h in enumerate(holes, 1):
         base = f"h{j}"
         for suffix, val, sig, lab in (("x", h["x"], h["sigma_xy"], "merkez x"), ("y", h["y"], h["sigma_xy"], "merkez y"),
@@ -277,7 +322,7 @@ def _measurements(p, pid, verts, holes, material, evidence):
     return stored, {"units": "mm", "features": feats}
 
 
-def _draw(img, c, oimg, lines, corners, order, holes, pockets, origin, ux, uy, samples, p, pid):
+def _draw(img, c, oimg, lines, corners, order, holes, pockets, origin, ux, uy, samples, p, pid, outer_label=None):
     dbg = img.copy()
     pts = np.round(oimg).astype(np.int32)
     cv2.polylines(dbg, [pts.reshape(-1, 1, 2)], True, (0, 180, 0), 1, cv2.LINE_AA)
@@ -305,6 +350,9 @@ def _draw(img, c, oimg, lines, corners, order, holes, pockets, origin, ux, uy, s
         cv2.polylines(dbg, [np.round(pk["img"]).astype(np.int32).reshape(-1, 1, 2)], True, (200, 0, 200), 2)
         put_label(dbg, pk["name"], pk["img"].mean(0), (200, 0, 200))
     o = to_img(origin)
+    if outer_label:
+        put_label(dbg, outer_label, oimg[np.argmin(oimg[:, 1])] + [10, -12], (0, 120, 0), 0.8)
+        cv2.drawMarker(dbg, tuple(np.round(o).astype(int)), (0, 120, 0), cv2.MARKER_CROSS, 24, 2)
     for d, col, name in ((ux, (0, 0, 255), "X"), (uy, (0, 160, 0), "Y")):
         tip = to_img(origin + d * 15)
         cv2.arrowedLine(dbg, tuple(np.round(o).astype(int)), tuple(np.round(tip).astype(int)), col, 2, tipLength=0.2)

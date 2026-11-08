@@ -15,11 +15,14 @@ def _load(p: Project, pid: str) -> dict:
         raise FileNotFoundError(f"{pid} için özellik yok, önce extract_features_2d")
     r = json.loads(f.read_text(encoding="utf-8"))
     feats = {}
-    for v in r["outer"]["vertices"]:
+    if r["outer"].get("shape") == "circle":
+        o = r["outer"]
+        feats["O"] = ("C", np.zeros(2), o["sigma_center"], {"dia": o["dia"], "sigma_dia": o["sigma_dia"]})
+    for v in r["outer"].get("vertices", []):
         feats[v["name"]] = ("V", np.array([v["x"], v["y"]]), np.hypot(v["sigma_x"], v["sigma_y"]) / np.sqrt(2), v)
     for h in r["holes"]:
         feats[h["name"]] = ("H", np.array([h["x"], h["y"]]), h["sigma_xy"], h)
-    for ln in r["outer"]["lines"]:
+    for ln in r["outer"].get("lines", []):
         feats[ln["name"]] = ("L", np.array(ln["point"]), ln["sigma_offset_mm"], ln)
     return feats
 
@@ -31,7 +34,7 @@ def measure(p: Project, pid: str, a: str, b: str | None) -> dict:
             raise KeyError(f"'{n}' yok; mevcut: {sorted(feats)}")
     ka, pa, sa, ra = feats[a]
     if b is None:
-        if ka == "H":
+        if ka in ("H", "C"):
             return {"kind": "diameter", "value_mm": ra["dia"], "uncertainty_mm": ra["sigma_dia"]}
         if ka == "V":
             return {"kind": "radius", "value_mm": ra["radius"], "uncertainty_mm": ra["sigma_r"]}

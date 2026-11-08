@@ -205,7 +205,10 @@ def top_z(ctx):
 
 def feat_pad(doc, body, ctx, f):
     sk = new_sketch(doc, body, ctx, f["id"], f.get("plane", "XY"), f.get("z"))
-    polygon(sk, ctx, f["profile"])
+    if "circle" in f:
+        circle(sk, ctx, f["circle"]["center"], f["circle"]["diameter"])
+    else:
+        polygon(sk, ctx, f["profile"])
     for h in f.get("holes", []):
         circle(sk, ctx, h["center"], h["diameter"])
     check_sketch(sk, ctx)

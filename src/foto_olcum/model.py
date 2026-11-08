@@ -35,8 +35,10 @@ def _numbers(f: dict) -> list:
     out = []
     t = f["type"]
     if t in ("pad", "pocket"):
-        for v in f["profile"]:
+        for v in f.get("profile", []):
             out += list(v)
+        if "circle" in f:
+            out += [*f["circle"]["center"], f["circle"]["diameter"]]
         for h in f.get("holes", []):
             out += [*h["center"], h["diameter"]]
     if t == "hole":
@@ -75,10 +77,16 @@ def validate(model: dict, values: dict[str, float]) -> list[str]:
             continue
         if f.get("plane", "XY") not in ("XY", "XZ", "YZ"):
             errs.append(f"{where}: plane XY/XZ/YZ olmalı")
-        req = {"pad": ["profile", "length"], "pocket": ["profile"], "hole": ["center", "diameter"]}[t]
+        req = {"pad": ["length"], "pocket": ["profile"], "hole": ["center", "diameter"]}[t]
+        if t == "pad" and ("profile" in f) == ("circle" in f):
+            errs.append(f"{where}: pad'de 'profile' ya da 'circle' alanlarından tam olarak biri olmalı")
+            continue
         missing = [k for k in req if k not in f]
         if missing:
             errs.append(f"{where}: eksik alan {missing}")
+            continue
+        if "circle" in f and not ({"center", "diameter"} <= set(f["circle"]) and len(f["circle"]["center"]) == 2):
+            errs.append(f"{where}: circle = {{center: [x, y], diameter}} olmalı")
             continue
         if "profile" in f:
             prof = f["profile"]
