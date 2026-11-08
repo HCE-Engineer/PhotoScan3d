@@ -101,11 +101,27 @@ def calibrate(paths: list[Path], name: str, sheet: Sheet | None = None) -> dict:
     # k3 left out: a phone calibration rarely covers the image corners, and a free k3 then
     # invents large corner distortion without improving the measured area (real S24 FE
     # photos: same hold-out accuracy, 100 px of made-up corner warp)
-    rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(objs, imgs, size, None, None, flags=cv2.CALIB_FIX_K3)
-    per = []
-    for o, i, r, t in zip(objs, imgs, rvecs, tvecs):
-        proj, _ = cv2.projectPoints(o, r, t, K, dist)
-        per.append(float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - i.reshape(-1, 2)) ** 2, 1)))))
+    def run(o_, i_):
+        rms_, K_, d_, rv_, tv_ = cv2.calibrateCamera(o_, i_, size, None, None, flags=cv2.CALIB_FIX_K3)
+        per_ = []
+        for o, i, r, t in zip(o_, i_, rv_, tv_):
+            proj, _ = cv2.projectPoints(o, r, t, K_, d_)
+            per_.append(float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - i.reshape(-1, 2)) ** 2, 1)))))
+        return rms_, K_, d_, per_
+
+    # Phone autofocus/OIS shift the intrinsics a little per shot; drop the shots that fit
+    # clearly worse than the rest (on real S24 FE photos this cut the worst hold-out
+    # distance error from 0.53 to 0.44 mm).
+    dropped = []
+    rms, K, dist, per = run(objs, imgs)
+    while len(objs) > 10:
+        w = int(np.argmax(per))
+        if per[w] <= max(0.8, 1.5 * float(np.median(per))):
+            break
+        dropped.append({"file": used[w], "rms_px": round(per[w], 3)})
+        for lst in (objs, imgs, used):
+            lst.pop(w)
+        rms, K, dist, per = run(objs, imgs)
     cam = Camera(name, list(size), K.tolist(), dist.ravel().tolist(), float(rms), len(objs),
                  "charuco", 0.003, time.strftime("%Y-%m-%d %H:%M"))
     path = cam.save()
@@ -115,7 +131,8 @@ def calibrate(paths: list[Path], name: str, sheet: Sheet | None = None) -> dict:
                     "değişen fotoğrafları çıkarıp tekrar deneyin; desenin fotoğraf kenar ve köşelerine de "
                     "geldiği kareler ekleyin")
     worst = sorted(zip(per, used), reverse=True)[:3]
-    return {"rms_px": float(rms), "n_used": len(objs), "skipped": skipped, "file": str(path),
+    return {"rms_px": float(rms), "n_used": len(objs), "skipped": skipped, "dropped_outliers": dropped,
+            "file": str(path),
             "image_size": list(size), "fx": float(K[0, 0]), "fy": float(K[1, 1]),
             "worst_images": [{"file": u, "rms_px": e} for e, u in worst], "warnings": warn}
 
