@@ -152,7 +152,8 @@ def render(part: Part, sheet: Sheet, cam: Cam, ss: int = 3, blur_px: float = 0.7
     th, tw = tex.shape
     # texture pixel centres sit at (i + 0.5) / pps squares; row 0 is the top (y = height)
     src = np.float32([[-0.5, -0.5], [tw - 0.5, -0.5], [tw - 0.5, th - 0.5], [-0.5, th - 0.5]])
-    world = [(0, sheet.height, 0), (sheet.width, sheet.height, 0), (sheet.width, 0, 0), (0, 0, 0)]
+    z = -sheet.glass_mm                                 # screen pixels sit below the glass
+    world = [(0, sheet.height, z), (sheet.width, sheet.height, z), (sheet.width, 0, z), (0, 0, z)]
     dst = (_proj(cam, world) * ss + (ss - 1) / 2).astype(np.float32)
     Hm = cv2.getPerspectiveTransform(src, dst)
     shade = np.round(black + (paper - black) * tex / 255.0).astype(np.uint8)

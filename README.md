@@ -11,7 +11,7 @@ Tasarım: [docs/SPEC.md](docs/SPEC.md). Claude'un yöntemi: [skill/foto-olcum/SK
 | Faz | İçerik | Durum |
 |---|---|---|
 | 0 | MCP iskeleti, proje/ölçü modeli, kumpas kilidi, FreeCAD build (tablo + tam kısıtlı sketch + STEP/STL) | bitti |
-| 1 | A4 ChArUco altlık, kalibrasyon, arkadan aydınlatmalı silüet, alt-piksel kenar, perspektif (z=0/z=t), doğru/daire/radyus fit, belirsizlik, compare + fark görseli | bitti, **sadece sentetik fotoğraflarla doğrulandı** |
+| 1 | ChArUco altlık (ekran veya A4), kalibrasyon, arkadan aydınlatmalı silüet, alt-piksel kenar, perspektif (z=0/z=t), doğru/daire/radyus fit, belirsizlik, compare + fark görseli | bitti, **sadece sentetik fotoğraflarla doğrulandı** |
 | 2 | Harfli teknik resim + ölçü tablosu, tutarlılık kontrolleri, malzeme kenar kayması (B) kalibrasyonu, snap, 2D şablon | sırada |
 | 3–4 | Çok görüşlü prizmatik (cep, kanal, pah), yakın çekim | sonra |
 
@@ -57,18 +57,31 @@ Skill (Claude'un yöntemi) için: `cp -r skill/foto-olcum ~/.claude/skills/`
 
 ## İlk kullanım (bir kez)
 
-1. **Altlığı bas:** `make_reference_sheet` → `~/foto-olcum-projeler/_altliklar/a4/a4.pdf`.
-   A4'e **%100 / gerçek boyut** ("sayfaya sığdır" kapalı), lazer yazıcı en iyisi.
-2. **Baskı ölçeğini ölç:** kağıttaki A–B ve A–C oklarının gösterdiği kare köşeleri arası
-   (nominal 127.0 mm) kumpasla → `set_sheet_measurement`.
-3. **Telefonu kalibre et:** ölçümde kullanacağın zoom ile altlığın 15–20 fotoğrafını çek
-   (farklı açılar ±30°, altlık bazen kadraj köşelerine gelsin) → `calibrate_camera(sheet="a4")`.
+İki altlık seçeneği var; ikisi de ChArUco deseni ve ortada parça için boş alan içerir.
+
+**A) Ekran (önerilen): dizüstü ekranı hem desen hem arka ışık**
+
+1. `make_reference_screen(connector="eDP-1")` → `~/foto-olcum-projeler/_altliklar/ekran14/`.
+   Çözünürlük ve fiziksel boyut EDID'den okunur (14": 1920×1080, 309×174 mm → 30×16 kare,
+   kare 10.3 mm, boş alan 268×124 mm).
+2. Ekranı yatır (ekran yukarı), parlaklık en yüksek, gece ışığı ve otomatik parlaklık kapalı.
+3. **Ölçek:** `eog --fullscreen ekran_olcum.png` → kırmızı halkalı A–B ve A–C köşe arası
+   (nominal 133.90 mm) kumpasla → `set_sheet_measurement(sheet="ekran14", ...)`.
+4. **Kalibrasyon:** `eog --fullscreen ekran_cekim.png`, parça yokken 15–20 foto (farklı açılar,
+   desen bazen kadraj köşelerinde) → `calibrate_camera(sheet="ekran14")`.
+
+Pikseller camın ~0.8 mm altındadır (`glass_mm`); bu modellenir (sentetikte yok sayılınca hata
+0.05 → 0.26 mm).
+
+**B) A4 kağıt:** `make_reference_sheet` → `a4.pdf`, %100 / gerçek boyutta bas, A–B / A–C
+(127.0 mm) kumpasla → `set_sheet_measurement`, kalibrasyon `calibrate_camera(sheet="a4")`.
+Kağıt arkadan aydınlatılmış bir yüzeyde (monitör, ışıklı tablet) kullanılır.
 
 ## Çekim
 
-Monitör/tablet beyaz ekran, üstüne basılı altlık, parça ortadaki boş alanda (oturduğu yüz
-aşağıda, desene değmeden). Telefon ~40 cm yukarıda, yaklaşık dik, kalibrasyondaki zoom,
-altlığın tamamı kadrajda. Fotoğrafı özgün çözünürlükte dosya olarak ver.
+`ekran_cekim.png` tam ekran açıkken parçayı ortadaki beyaz alana koy (oturduğu yüz aşağıda,
+desene değmeden). Telefon ~30–40 cm yukarıda, yaklaşık dik, kalibrasyondaki zoom; desenin
+mümkün olduğunca çoğu kadrajda. Fotoğrafı özgün çözünürlükte dosya olarak ver.
 
 ## Akış
 

@@ -1,15 +1,18 @@
-"""Printed ChArUco base sheet (A4) with a blank middle area for the part.
+"""ChArUco base with a blank middle area for the part: printed on A4 paper, or shown
+full-screen on a monitor laid flat (the screen is then both backlight and pattern).
 
 Sheet coordinates (mm): origin at the board's lower-left corner, x right, y up, z up
-(toward the camera); the sheet is the plane z = 0. OpenCV's ChArUco object points run
-x right, y *down* from the top-left, so y_sheet = height - y_board.
+(toward the camera). The part sits on z = 0. On paper the pattern is at z = 0; on a screen
+the pixels lie `glass_mm` below the glass the part sits on, so the pattern is at -glass_mm.
+OpenCV's ChArUco object points run x right, y *down* from the top-left, so
+y_sheet = height - y_board.
 
 On a white backlight the paper glows, printed squares stay dark, and the part in the blank
 middle shows as a silhouette. ChArUco chessboard corners are located far more precisely
 than single ArUco marker corners. The same sheet also serves for camera calibration.
 
-Printers scale by ~0.5-1 %; the user measures 10 squares along x and y with a caliper
-(marked A-B and A-C on the sheet) and the object points are scaled accordingly.
+Printers scale by ~0.5-1 % and a screen's EDID size is rounded to whole mm; the user
+measures A-B (x) and A-C (y) with a caliper and the object points are scaled accordingly.
 """
 import json
 from dataclasses import asdict, dataclass
@@ -35,9 +38,17 @@ class Sheet:
     squares_y: int = 22
     square_mm: float = 12.7
     marker_mm: float = 9.525
-    border: int = 2               # squares of pattern around the blank middle
+    border: int = 2               # squares of pattern around the blank middle (paper)
     measured_ref: list | None = None   # [A-B, A-C] in mm, by caliper
     dictionary: str = DICT_NAME
+    kind: str = "paper"           # "paper" | "screen"
+    blank: list | None = None     # [x0, y0, x1, y1] blank area in squares (y up); default: border
+    ref_origin: list | None = None     # A in squares; default [1, 1]
+    ref_squares: int = REF_SQUARES     # A-B and A-C span in squares
+    glass_mm: float = 0.0         # pattern plane below the part's resting surface
+    glass_sigma_mm: float = 0.0
+    square_px: int = 0            # screen: square size in screen pixels
+    screen: dict | None = None    # screen: connector, resolution, EDID size
 
     @property
     def width(self):
@@ -48,19 +59,25 @@ class Sheet:
         return self.squares_y * self.square_mm
 
     @property
+    def blank_sq(self):
+        if self.blank:
+            return self.blank
+        b = self.border
+        return [b, b, self.squares_x - b, self.squares_y - b]
+
+    @property
     def window(self):
         """[x0, y0, x1, y1] of the blank middle area (nominal sheet mm)."""
-        b = self.border * self.square_mm
-        return [b, b, self.width - b, self.height - b]
+        return [v * self.square_mm for v in self.blank_sq]
 
     @property
     def ref_nominal(self):
-        return REF_SQUARES * self.square_mm
+        return self.ref_squares * self.square_mm
 
     @property
     def ref_points(self):
-        """Caliper points A, B (= A + 10 squares in x), C (= A + 10 squares in y)."""
-        a = np.array([1.0, 1.0]) * self.square_mm
+        """Caliper points A, B (= A + n squares in x), C (= A + n squares in y)."""
+        a = np.array(self.ref_origin or [1.0, 1.0], float) * self.square_mm
         d = self.ref_nominal
         return {"A": a, "B": a + [d, 0], "C": a + [0, d]}
 
@@ -72,9 +89,9 @@ class Sheet:
 
     @property
     def scale_sigma_rel(self):
-        """Printer scale error if unmeasured, else caliper reading on printed corners."""
+        """Printer/EDID scale error if unmeasured, else the caliper reading."""
         if not self.measured_ref:
-            return 0.01
+            return 0.01 if self.kind == "paper" else 0.003
         return 0.05 / self.ref_nominal
 
     def board(self):
@@ -90,7 +107,7 @@ class Sheet:
         """Sheet coordinates (N,3) of ChArUco corner ids, printer scale applied."""
         obj = self.board().getChessboardCorners()[np.asarray(ids).ravel()]
         xy = np.c_[obj[:, 0], self.height - obj[:, 1]]
-        return np.c_[self._apply_scale(xy), np.zeros(len(xy))]
+        return np.c_[self._apply_scale(xy), np.full(len(xy), -self.glass_mm)]
 
     def window_poly(self, shrink: float = 0.0) -> np.ndarray:
         x0, y0, x1, y1 = self.window
@@ -102,8 +119,9 @@ class Sheet:
         """Board image (row 0 = top = max y) with the middle blanked to white."""
         img = self.board().generateImage((self.squares_x * px_per_square, self.squares_y * px_per_square),
                                          marginSize=0)
-        b = self.border * px_per_square
-        img[b:img.shape[0] - b, b:img.shape[1] - b] = 255
+        x0, y0, x1, y1 = (int(v * px_per_square) for v in self.blank_sq)
+        top = self.squares_y * px_per_square
+        img[top - y1:top - y0, x0:x1] = 255
         return img
 
     def save(self, path: Path):
@@ -172,5 +190,69 @@ def build(sheet: Sheet, out_dir: Path) -> dict:
              "config": out_dir / "sheet.json"}
     im.convert("1").save(files["pdf"], resolution=DPI)
     im.resize((pw // 6, ph // 6), Image.BOX).save(files["preview_png"])
+    sheet.save(files["config"])
+    return {k: str(v) for k, v in files.items()}
+
+
+def read_edid(connector: str) -> dict:
+    """Preferred resolution and physical size (mm) of a connected display from its EDID."""
+    hits = sorted(Path("/sys/class/drm").glob(f"card*-{connector}"))
+    if not hits:
+        names = sorted(p.name.split("-", 1)[1] for p in Path("/sys/class/drm").glob("card*-*"))
+        raise FileNotFoundError(f"ekran bulunamadı: {connector}; mevcut: {names}")
+    e = (hits[0] / "edid").read_bytes()
+    if len(e) < 128:
+        raise ValueError(f"{connector}: EDID okunamadı (ekran bağlı mı?)")
+    d = e[54:72]
+    w_px, h_px = d[2] | ((d[4] & 0xF0) << 4), d[5] | ((d[7] & 0xF0) << 4)
+    w_mm, h_mm = d[12] | ((d[14] & 0xF0) << 4), d[13] | ((d[14] & 0x0F) << 8)
+    status = (hits[0] / "status").read_text().strip()
+    enabled = (hits[0] / "enabled").read_text().strip() if (hits[0] / "enabled").exists() else "?"
+    return {"connector": connector, "px": [w_px, h_px], "mm": [w_mm, h_mm], "status": status, "enabled": enabled}
+
+
+def screen_layout(name: str, edid: dict, square_px: int = 64, border: int = 2,
+                  glass_mm: float = 0.8, glass_sigma_mm: float = 0.4) -> Sheet:
+    """ChArUco filling a screen, blank middle, A-B / A-C as long as a 150 mm caliper allows."""
+    (w_px, h_px), (w_mm, h_mm) = edid["px"], edid["mm"]
+    pitch = w_mm / w_px                     # the larger dimension has the smaller EDID rounding error
+    nx, ny = w_px // square_px, h_px // square_px
+    sq = square_px * pitch
+    n_ref = int(min(140.0 // sq, nx - 2, ny - 2))
+    dict_name = next(d for d, n in (("DICT_4X4_250", 250), ("DICT_4X4_1000", 1000)) if nx * ny // 2 + 1 <= n)
+    return Sheet(name, nx, ny, sq, 0.75 * sq, border, None, dict_name, "screen", None, [1, 1], n_ref,
+                 glass_mm, glass_sigma_mm, square_px, edid)
+
+
+def build_screen(sheet: Sheet, out_dir: Path) -> dict:
+    """Full-screen PNGs at native resolution: one to photograph, one with A/B/C rings to
+    measure with the caliper. Both have identical pixel geometry."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    w_px, h_px = sheet.screen["px"]
+    sq = sheet.square_px
+    tex = sheet.texture(sq)
+    page = np.full((h_px, w_px), 255, np.uint8)
+    ox, oy = (w_px - tex.shape[1]) // 2, (h_px - tex.shape[0]) // 2
+    page[oy:oy + tex.shape[0], ox:ox + tex.shape[1]] = tex
+    shoot = Image.fromarray(page).convert("RGB")
+    meas = shoot.copy()
+    dr = ImageDraw.Draw(meas)
+    font = ImageFont.truetype(FONT, 28)
+    for name, (x, y) in sheet.ref_points.items():
+        px, py = ox + x / sheet.square_mm * sq, oy + (sheet.squares_y - y / sheet.square_mm) * sq
+        r = sq * 0.35
+        dr.ellipse([px - r, py - r, px + r, py + r], outline=(230, 0, 0), width=4)
+        dr.text((px + r + 4, py - r - 34), name, font=font, fill=(230, 0, 0))
+    x0, y0, x1, y1 = sheet.blank_sq
+    tx, ty = ox + (x0 + 0.5) * sq, oy + (sheet.squares_y - y1 + 0.5) * sq
+    dr.multiline_text((tx, ty), (
+        f"foto-olcum ekran altlığı '{sheet.name}'\n"
+        f"Kırmızı halkalı dama köşeleri: A-B ve A-C = {sheet.ref_squares} kare = {sheet.ref_nominal:.2f} mm (nominal)\n"
+        "Kumpas uçlarını köşelere koyup ölçün, set_sheet_measurement ile girin.\n"
+        "Fotoğraf için ekran_cekim.png'yi açın (halkalar olmadan)."), font=font, fill=(200, 0, 0), spacing=10)
+    files = {"shoot_png": out_dir / "ekran_cekim.png", "measure_png": out_dir / "ekran_olcum.png",
+             "config": out_dir / "sheet.json"}
+    shoot.save(files["shoot_png"])
+    meas.save(files["measure_png"])
     sheet.save(files["config"])
     return {k: str(v) for k, v in files.items()}

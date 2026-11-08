@@ -13,6 +13,7 @@ from . import config, features2d
 from . import measure as measure_mod
 from .board import Sheet
 from .board import build as build_sheet
+from .board import build_screen, read_edid, screen_layout
 from .board import detect as detect_sheet
 from .calib import Camera, calibrate, imread, make_pattern
 from .model import validate
@@ -164,9 +165,39 @@ def make_reference_sheet(name: str = "a4"):
 
 
 @mcp.tool()
+def make_reference_screen(name: str = "ekran14", connector: str = "eDP-1", square_px: int = 64,
+                          glass_mm: float = 0.8):
+    """Ekranı altlık olarak kullanmak için tam ekran ChArUco görüntüleri üretir (ekran yatay
+    yatırılır, hem arka ışık hem desen olur). Çözünürlük ve fiziksel boyut EDID'den okunur.
+    connector: 'eDP-1' (dizüstü), 'HDMI-A-1' ... glass_mm: piksellerin cam yüzeyin altındaki
+    derinliği (dizüstü ~0.8). Ölçek A-B / A-C kumpas ölçüsüyle kesinleşir."""
+    try:
+        edid = read_edid(connector)
+        sheet = screen_layout(name, edid, square_px, glass_mm=glass_mm)
+        files = build_screen(sheet, config.sheets_dir() / name)
+        x0, y0, x1, y1 = sheet.window
+        out = {"ok": True, "sheet": name, "screen": edid, "files": files,
+               "blank_area_mm": [round(x1 - x0, 1), round(y1 - y0, 1)],
+               "ref_nominal_mm": round(sheet.ref_nominal, 3), "talimat": [
+            "Ekranı düz bir yüzeye yatırın (ekran yukarı), parlaklığı en yükseğe alın, gece ışığı/mavi ışık "
+            "filtresini ve otomatik parlaklığı kapatın.",
+            f"Ölçüm için: eog --fullscreen '{files['measure_png']}' — kırmızı halkalı A-B ve A-C köşe "
+            f"aralarını (nominal {sheet.ref_nominal:.2f} mm) kumpasla ölçüp set_sheet_measurement ile girin.",
+            f"Çekim için: eog --fullscreen '{files['shoot_png']}' — parçayı ortadaki beyaz alana koyun, "
+            "desene değmesin. Ekranı çizmemek için parçayı nazikçe koyun.",
+            "Kamera kalibrasyonu için de ekran_cekim.png açıkken (parça yokken) 15-20 foto çekip "
+            f"calibrate_camera(sheet='{name}') kullanın."]}
+        if edid.get("enabled") == "disabled":
+            out["warning"] = f"{connector} şu an kapalı görünüyor (kapak kapalı?); görüntüyü açmadan önce etkinleştirin."
+        return _with_images(out, files["measure_png"])
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
 def set_sheet_measurement(sheet: str, ab_mm: float, ac_mm: float) -> dict:
-    """Basılı altlıkta kumpasla ölçülen A-B (x) ve A-C (y) mesafeleri. ChArUco köşe
-    koordinatları buna göre ölçeklenir."""
+    """Altlıkta (kağıt ya da ekran) kumpasla ölçülen A-B (x) ve A-C (y) mesafeleri. ChArUco
+    köşe koordinatları buna göre ölçeklenir."""
     try:
         sh = Sheet.load(sheet)
         sh.measured_ref = [float(ab_mm), float(ac_mm)]

@@ -35,3 +35,13 @@ def test_uncalibrated_uncertainty_covers_error(tmp_path):
                   verbose=False, calibrated=False)
     assert s["n_vertices"] == 5 and s["n_holes"] == 3 and s["frac_within_2sigma"] >= 0.9, s
     assert any("kalibrasyonu yok" in w for w in s["warnings"])
+
+
+@pytest.mark.parametrize("tilt", [(4.0, -3.0), (12.0, -6.0)])
+def test_laptop_screen_as_base(tmp_path, tilt):
+    """14" laptop screen as pattern + backlight; pattern 0.8 mm under the glass."""
+    part = {**DEFAULT_PART, "place": (100.0, 35.0, 10.0)}
+    cam = {"target": (154.5, 82.4), "dist_mm": 300.0, "tilt_deg": tilt}
+    s, _, _ = run(tmp_path, part, cam, seed=21, verbose=False, screen=True)
+    assert s["n_vertices"] == 5 and s["n_holes"] == 3, s
+    assert s["max_err_mm"] < 0.2 and s["frac_within_2sigma"] >= 0.9, s

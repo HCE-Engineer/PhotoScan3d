@@ -47,7 +47,7 @@ belirsizliği vardır; ölçüyü belirsizliğiyle birlikte söyle.
 ## Ölçüm tahmine uymadığında
 
 Tek tek düzeltmeden önce örüntüye bak:
-- Tüm farklar **aynı oranda** → ölçek (altlığın A–B/A–C ölçüsü girildi mi, kalibrasyon).
+- Tüm farklar **aynı oranda** → ölçek (altlığın A–B/A–C ölçüsü girildi mi, ekranda cam payı `glass_mm` doğru mu, kalibrasyon).
 - Dış ölçüler hep büyük, delikler hep küçük (veya tersi), farklar **sabit mm** → kenar kayması
   (malzemeye bağlı, şişede opak kapakla camda farklıydı). Malzeme başına tek bir düzeltme.
   (Faz 2: `fit_edge_offsets` henüz yok; şimdilik kullanıcıya söyle ve etkilenen ölçüleri

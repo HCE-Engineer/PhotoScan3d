@@ -123,11 +123,12 @@ def extract(p: Project, pid: str, axis_line: int | None = None, origin_corner: i
     mask = cv2.imread(str(p.path(f"masks/{pid}.png")), 0)
     c = _Ctx(pose.K, pose, ms["thickness"].value_mm, ms["thickness"].uncertainty_mm, info["mm_per_px"], sheet)
     # a focal-length error mis-scales the z = t plane relative to the sheet plane by
-    # ~ t / D * df/f; uncalibrated lenses also carry unmodelled distortion
+    # ~ t / D * df/f; an uncertain screen glass depth does the same by ~ dg / D;
+    # uncalibrated lenses also carry unmodelled distortion
     dist_mm = float(np.linalg.norm(pose.camera_center))
     f_rel = c.f_rel = info.get("f_sigma_rel", 0.3)
-    c.extra_rel = float(np.hypot(c.t / dist_mm * f_rel,
-                                 0.002 if info.get("camera_source") != "charuco" else 0.0))
+    c.extra_rel = float(np.sqrt((c.t / dist_mm * f_rel) ** 2 + (sheet.glass_sigma_mm / dist_mm) ** 2
+                                + (0.002 if info.get("camera_source") != "charuco" else 0.0) ** 2))
 
     contours, hier = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
     hier = hier[0]

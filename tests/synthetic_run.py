@@ -20,8 +20,12 @@ DEFAULT_PART = dict(
 )
 
 
-def prepare(root: Path, part_kw=None, cam_kw=None, seed=0):
-    """Frame 'synth', camera 'synth' and one rendered photo under root. Returns (photo, part)."""
+SCREEN14 = {"connector": "eDP-1", "px": [1920, 1080], "mm": [309, 174]}
+
+
+def prepare(root: Path, part_kw=None, cam_kw=None, seed=0, screen=False):
+    """Sheet 'synth' (A4 paper, or the 14" laptop screen with glass), camera 'synth' and one
+    rendered photo under root. Returns (photo, part)."""
     os.environ["FOTO_OLCUM_PROJECTS"] = str(root)
     from foto_olcum import synth
     from foto_olcum.board import Sheet
@@ -29,7 +33,12 @@ def prepare(root: Path, part_kw=None, cam_kw=None, seed=0):
 
     part = synth.Part(**(part_kw or DEFAULT_PART))
     cam = synth.Cam(**(cam_kw or {}))
-    f = Sheet("synth", measured_ref=[127.0, 127.0])
+    if screen:
+        from foto_olcum.board import screen_layout
+        f = screen_layout("synth", SCREEN14)
+        f.measured_ref = [f.ref_nominal, f.ref_nominal]
+    else:
+        f = Sheet("synth", measured_ref=[127.0, 127.0])
     f.save(root / "_altliklar" / "synth" / "sheet.json")
     photo = root / f"synth_{seed}.jpg"
     synth.render(part, f, cam, seed=seed).save(photo, quality=92)
@@ -37,11 +46,11 @@ def prepare(root: Path, part_kw=None, cam_kw=None, seed=0):
     return photo, part
 
 
-def run(root: Path, part_kw=None, cam_kw=None, seed=0, verbose=True, calibrated=True):
+def run(root: Path, part_kw=None, cam_kw=None, seed=0, verbose=True, calibrated=True, screen=False):
     from foto_olcum import features2d, synth
     from foto_olcum.project import Measurement, Project
 
-    photo, part = prepare(root, part_kw, cam_kw, seed)
+    photo, part = prepare(root, part_kw, cam_kw, seed, screen)
 
     name = f"synth_{seed}"
     p = Project.create(name)

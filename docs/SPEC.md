@@ -63,6 +63,13 @@ debug görsellerini kontrol etmek içindir.
   ya da monitörde gösterilen desen. Kalibrasyon yoksa: EXIF odak + distorsiyon sıfır, uyarıyla.
 - Bozuk para / rulman: yedek ölçek doğrulaması (bilinen çap).
 
+**Ekran altlık (08.11.2026, Hüseyin'in önerisi, birincil yöntem):** 14" dizüstü ekranı (eDP-1,
+1920×1080, EDID 309×174 mm) yatırılıp ChArUco deseni tam ekran gösterilir; ekran hem desen hem
+arka ışıktır. Kare 64 px (10.3 mm), 30×16 kare, boş alan 268×124 mm. A–B / A–C 13 kare
+(133.90 mm) ölçüm görüntüsünde kırmızı halkalı; çekim görüntüsü halkasız, aynı geometride.
+Pikseller cam yüzeyin `glass_mm` (varsayılan 0.8 ± 0.4) altında: desen z = −glass, parça z = 0.
+Bu belirsizlik ölçek belirsizliğine `σ_glass / D` olarak eklenir.
+
 ## 5. Çekim protokolü (araç anlatabilmeli)
 
 1. Kalibrasyon (telefon başına bir kez, aynı zoom ve odak modu).
